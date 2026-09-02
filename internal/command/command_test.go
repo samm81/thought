@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -31,11 +33,6 @@ func TestRun(t *testing.T) {
 			name:       "short help",
 			arguments:  []string{"-h"},
 			wantOutput: usageText,
-		},
-		{
-			name:      "planned command",
-			arguments: []string{"new"},
-			wantError: ErrNotImplemented,
 		},
 		{
 			name:          "unknown command",
@@ -68,6 +65,35 @@ func TestRun(t *testing.T) {
 	}
 }
 
+func TestRunRejectsInvalidPublishArguments(t *testing.T) {
+	var output bytes.Buffer
+	err := Run(context.Background(), []string{"publish"}, &output)
+	if !errors.Is(err, ErrUsage) {
+		t.Fatalf("Run() error = %v, want usage error", err)
+	}
+}
+
+func TestRunNewCreatesThought(t *testing.T) {
+	archiveRoot := t.TempDir()
+	t.Setenv("THOUGHT_HOME", archiveRoot)
+	t.Setenv("VISUAL", "true")
+	t.Setenv("EDITOR", "true")
+
+	var output bytes.Buffer
+	if err := Run(context.Background(), []string{"new", "demo"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	thoughtPath := strings.TrimSpace(output.String())
+	for _, path := range []string{
+		filepath.Join(thoughtPath, "01.md"),
+		filepath.Join(thoughtPath, "meta.toml"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("created path %q: %v", path, err)
+		}
+	}
+}
+
 func TestExitCode(t *testing.T) {
 	t.Parallel()
 
@@ -78,7 +104,6 @@ func TestExitCode(t *testing.T) {
 	}{
 		{name: "nil", want: 0},
 		{name: "usage", err: ErrUsage, want: 2},
-		{name: "not implemented", err: ErrNotImplemented, want: 1},
 		{name: "canceled", err: context.Canceled, want: 130},
 		{name: "deadline", err: context.DeadlineExceeded, want: 124},
 	}
