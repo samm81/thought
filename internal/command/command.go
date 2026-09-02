@@ -174,25 +174,60 @@ func runStatus(arguments []string, output io.Writer) error {
 		postName := fmt.Sprintf("%02d", post.Number)
 		for _, target := range metadata.Targets() {
 			record := publication.Get(postName, target)
-			if _, err := fmt.Fprintf(output, "%s %s: %s", postName, target, record.Status); err != nil {
-				return fmt.Errorf("write status: %w", err)
-			}
-			if record.URL != "" {
-				if _, err := fmt.Fprintf(output, " %s", record.URL); err != nil {
-					return fmt.Errorf("write status: %w", err)
-				}
-			}
-			if record.Error != "" {
-				if _, err := fmt.Fprintf(output, " (%s)", record.Error); err != nil {
-					return fmt.Errorf("write status: %w", err)
-				}
-			}
-			if _, err := fmt.Fprintln(output); err != nil {
+			if err := writeRecordStatus(output, postName, target, record); err != nil {
 				return fmt.Errorf("write status: %w", err)
 			}
 		}
 	}
 	return nil
+}
+
+func writeRecordStatus(output io.Writer, post, target string, record metadata.Record) error {
+	var line strings.Builder
+	fmt.Fprintf(&line, "%s %s: %s", post, target, record.Status)
+	writeStatusTime(&line, "attempted_at", record.AttemptedAt)
+	writeStatusTime(&line, "published_at", record.PublishedAt)
+	writeStatusString(&line, "remote_id", record.RemoteID)
+	writeStatusString(&line, "remote_cid", record.RemoteCID)
+	writeStatusString(&line, "url", record.URL)
+	writeStatusString(&line, "parent_id", record.ParentID)
+	writeStatusString(&line, "parent_cid", record.ParentCID)
+	writeStatusString(&line, "root_id", record.RootID)
+	writeStatusString(&line, "root_cid", record.RootCID)
+	writeStatusString(&line, "error_kind", record.ErrorKind)
+	writeStatusString(&line, "error", record.Error)
+	if action := statusAction(record.Status); action != "" {
+		writeStatusString(&line, "action", action)
+	}
+	if _, err := fmt.Fprintln(output, line.String()); err != nil {
+		return err
+	}
+	return nil
+}
+
+func writeStatusString(output *strings.Builder, key, value string) {
+	if value != "" {
+		fmt.Fprintf(output, " %s=%q", key, value)
+	}
+}
+
+func writeStatusTime(output *strings.Builder, key string, value *time.Time) {
+	if value != nil && !value.IsZero() {
+		writeStatusString(output, key, value.UTC().Format(time.RFC3339Nano))
+	}
+}
+
+func statusAction(state metadata.State) string {
+	switch state {
+	case metadata.StatePublishing:
+		return "inspect destination and edit meta.toml to published, failed, or pending"
+	case metadata.StateFailed:
+		return "run publish to retry"
+	case metadata.StateRejected:
+		return "fix the post and edit meta.toml status to pending"
+	default:
+		return ""
+	}
 }
 
 func parsePublishArguments(arguments []string) (string, []string, error) {

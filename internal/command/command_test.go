@@ -8,6 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/samm81/thought/internal/archive"
+	"github.com/samm81/thought/internal/metadata"
 )
 
 func TestRun(t *testing.T) {
@@ -90,6 +94,64 @@ func TestRunNewCreatesThought(t *testing.T) {
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("created path %q: %v", path, err)
+		}
+	}
+}
+
+func TestRunStatusReportsMetadataAndRecovery(t *testing.T) {
+	archiveRoot := t.TempDir()
+	root, err := archive.New(archiveRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	thought, err := root.Create("demo", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	publication := metadata.New([]string{"01"})
+	attemptedAt := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	published := publication.Get("01", metadata.TargetBluesky)
+	if err := published.MarkPublishing(attemptedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := published.MarkPublished(attemptedAt.Add(time.Second), metadata.Reference{ID: "post-1", CID: "cid-1"}, "https://bsky.app/post/1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := publication.Set("01", metadata.TargetBluesky, published); err != nil {
+		t.Fatal(err)
+	}
+	rejected := publication.Get("01", metadata.TargetX)
+	if err := rejected.MarkPublishing(attemptedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := rejected.MarkRejected("validation", "too long"); err != nil {
+		t.Fatal(err)
+	}
+	if err := publication.Set("01", metadata.TargetX, rejected); err != nil {
+		t.Fatal(err)
+	}
+	if err := metadata.Save(thought.MetadataPath(), publication); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("THOUGHT_HOME", archiveRoot)
+	var output bytes.Buffer
+	if err := Run(context.Background(), []string{"status", "demo"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	status := output.String()
+	for _, value := range []string{
+		`01 bluesky: published`,
+		`remote_id="post-1"`,
+		`remote_cid="cid-1"`,
+		`url="https://bsky.app/post/1"`,
+		`01 x: rejected`,
+		`error="too long"`,
+		`action="fix the post and edit meta.toml status to pending"`,
+	} {
+		if !strings.Contains(status, value) {
+			t.Fatalf("status = %q, want %q", status, value)
 		}
 	}
 }

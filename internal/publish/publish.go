@@ -211,7 +211,9 @@ func (p Publisher) publishTarget(
 			if root == nil {
 				root = current
 			}
-			fmt.Fprintf(output, "%s %s: published\n", target, postName)
+			if _, err := fmt.Fprintf(output, "%s %s: published\n", target, postName); err != nil {
+				return targetError(target, postName, fmt.Errorf("write publication status: %w", err))
+			}
 		default:
 			return targetError(target, postName, fmt.Errorf("unsupported xpost response status %q", response.Status))
 		}
