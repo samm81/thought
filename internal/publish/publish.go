@@ -174,7 +174,8 @@ func (p Publisher) publishTarget(
 
 		switch response.Status {
 		case "failed":
-			if markErr := record.MarkFailed(response.ErrorKind, response.Error); markErr != nil {
+			errorKind, errorMessage := responseError(response, "transport")
+			if markErr := record.MarkFailed(errorKind, errorMessage); markErr != nil {
 				return targetError(target, postName, markErr)
 			}
 			if err := publication.Set(postName, target, record); err != nil {
@@ -183,9 +184,10 @@ func (p Publisher) publishTarget(
 			if err := metadata.Save(thought.MetadataPath(), *publication); err != nil {
 				return targetError(target, postName, fmt.Errorf("save failed state: %w", err))
 			}
-			return targetError(target, postName, errors.New(response.Error))
+			return targetError(target, postName, errors.New(errorMessage))
 		case "rejected":
-			if markErr := record.MarkRejected(response.ErrorKind, response.Error); markErr != nil {
+			errorKind, errorMessage := responseError(response, "validation")
+			if markErr := record.MarkRejected(errorKind, errorMessage); markErr != nil {
 				return targetError(target, postName, markErr)
 			}
 			if err := publication.Set(postName, target, record); err != nil {
@@ -194,7 +196,7 @@ func (p Publisher) publishTarget(
 			if err := metadata.Save(thought.MetadataPath(), *publication); err != nil {
 				return targetError(target, postName, fmt.Errorf("save rejected state: %w", err))
 			}
-			return targetError(target, postName, errors.New(response.Error))
+			return targetError(target, postName, errors.New(errorMessage))
 		case "published":
 			result := metadata.Reference{ID: response.RemoteID, CID: response.RemoteCID}
 			if err := record.MarkPublished(p.now(), result, response.URL); err != nil {
@@ -255,4 +257,16 @@ func postNames(posts []archive.Post) []string {
 
 func targetError(target, post string, err error) error {
 	return fmt.Errorf("%s %s: %w", target, post, err)
+}
+
+func responseError(response xpost.Response, defaultKind string) (string, string) {
+	kind := strings.TrimSpace(response.ErrorKind)
+	if kind == "" {
+		kind = defaultKind
+	}
+	message := strings.TrimSpace(response.Error)
+	if message == "" {
+		message = fmt.Sprintf("xpost bridge returned %s without an error", response.Status)
+	}
+	return kind, message
 }

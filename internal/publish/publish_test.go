@@ -2,8 +2,10 @@ package publish
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +17,16 @@ import (
 type fakeClient struct {
 	responses []xpost.Response
 	requests  []xpost.Request
+}
+
+type errorClient struct {
+	err     error
+	request int
+}
+
+func (c *errorClient) Publish(_ context.Context, _ xpost.Request) (xpost.Response, error) {
+	c.request++
+	return xpost.Response{}, c.err
 }
 
 func (c *fakeClient) Publish(_ context.Context, request xpost.Request) (xpost.Response, error) {
@@ -100,6 +112,105 @@ func TestPublishKeepsTargetsIndependent(t *testing.T) {
 	}
 	if got := publication.Get("01", metadata.TargetX).Status; got != metadata.StatePublished {
 		t.Fatalf("X state = %q", got)
+	}
+}
+
+func TestPublishRetriesFailedPost(t *testing.T) {
+	t.Parallel()
+
+	thought := newThought(t, "01.md", "first")
+	publication := metadata.New([]string{"01"})
+	record := publication.Get("01", metadata.TargetBluesky)
+	if err := record.MarkPublishing(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := record.MarkFailed("transport", "timeout"); err != nil {
+		t.Fatal(err)
+	}
+	if err := publication.Set("01", metadata.TargetBluesky, record); err != nil {
+		t.Fatal(err)
+	}
+	if err := metadata.Save(thought.MetadataPath(), publication); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &fakeClient{responses: []xpost.Response{{Status: "published", RemoteID: "post-1"}}}
+	if err := New(client).Publish(context.Background(), thought, []string{metadata.TargetBluesky}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(client.requests))
+	}
+	loaded, err := metadata.Load(thought.MetadataPath(), []string{"01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Get("01", metadata.TargetBluesky).Status; got != metadata.StatePublished {
+		t.Fatalf("status = %q, want published", got)
+	}
+}
+
+func TestPublishPreservesPublishingOnCancellation(t *testing.T) {
+	t.Parallel()
+
+	thought := newThought(t, "01.md", "first")
+	client := &errorClient{err: context.Canceled}
+	if err := New(client).Publish(context.Background(), thought, []string{metadata.TargetBluesky}, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Publish() error = %v, want context canceled", err)
+	}
+	if client.request != 1 {
+		t.Fatalf("request count = %d, want 1", client.request)
+	}
+	loaded, err := metadata.Load(thought.MetadataPath(), []string{"01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Get("01", metadata.TargetBluesky).Status; got != metadata.StatePublishing {
+		t.Fatalf("status = %q, want publishing", got)
+	}
+}
+
+func TestPublishRejectsAndStopsThread(t *testing.T) {
+	t.Parallel()
+
+	thought := newThought(t, "01.md", "first", "02.md", "second")
+	client := &fakeClient{responses: []xpost.Response{{Status: "rejected", Error: "too long"}}}
+	if err := New(client).Publish(context.Background(), thought, []string{metadata.TargetBluesky}, nil); err == nil {
+		t.Fatal("Publish() error = nil, want rejection")
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(client.requests))
+	}
+	loaded, err := metadata.Load(thought.MetadataPath(), []string{"01", "02"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Get("01", metadata.TargetBluesky).Status; got != metadata.StateRejected {
+		t.Fatalf("first status = %q, want rejected", got)
+	}
+	if got := loaded.Get("02", metadata.TargetBluesky).Status; got != metadata.StatePending {
+		t.Fatalf("second status = %q, want pending", got)
+	}
+	if !strings.Contains(loaded.Get("01", metadata.TargetBluesky).Error, "too long") {
+		t.Fatalf("rejection error = %q", loaded.Get("01", metadata.TargetBluesky).Error)
+	}
+}
+
+func TestPublishUsesFallbackResponseError(t *testing.T) {
+	t.Parallel()
+
+	thought := newThought(t, "01.md", "first")
+	client := &fakeClient{responses: []xpost.Response{{Status: "failed"}}}
+	if err := New(client).Publish(context.Background(), thought, []string{metadata.TargetBluesky}, nil); err == nil {
+		t.Fatal("Publish() error = nil, want failure")
+	}
+	loaded, err := metadata.Load(thought.MetadataPath(), []string{"01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := loaded.Get("01", metadata.TargetBluesky)
+	if record.ErrorKind != "transport" || record.Error == "" {
+		t.Fatalf("failed record = %#v", record)
 	}
 }
 

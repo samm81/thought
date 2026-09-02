@@ -2,6 +2,8 @@ package xpost
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -39,6 +41,50 @@ func TestPublishHonorsTimeout(t *testing.T) {
 	client := New(command, 10*time.Millisecond)
 	if _, err := client.Publish(context.Background(), Request{}); err == nil {
 		t.Fatal("Publish() error = nil, want timeout")
+	}
+}
+
+func TestPublishSendsStructuredRequest(t *testing.T) {
+	t.Parallel()
+
+	capturePath := filepath.Join(t.TempDir(), "request.json")
+	command := helperCommand(t, fmt.Sprintf("cat > %q\nprintf '%%s\\n' '{\"status\":\"published\",\"remote_id\":\"post-1\"}'", capturePath))
+	request := Request{
+		Target: "x",
+		Text:   "hello",
+		Attachments: []Attachment{{
+			Path: "image.png",
+			Alt:  "a result",
+		}},
+		ReplyTo:     &Reference{ID: "parent-1", CID: "parent-cid"},
+		RootReplyTo: &Reference{ID: "root-1", CID: "root-cid"},
+	}
+	if _, err := New(command, time.Second).Publish(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := os.ReadFile(capturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Operation   string       `json:"operation"`
+		Target      string       `json:"target"`
+		Text        string       `json:"text"`
+		Attachments []Attachment `json:"attachments"`
+		ReplyTo     *Reference   `json:"reply_to"`
+		RootReplyTo *Reference   `json:"root_reply_to"`
+	}
+	if err := json.Unmarshal(payload, &got); err != nil {
+		t.Fatalf("request = %q: %v", payload, err)
+	}
+	if got.Operation != "publish" || got.Target != "x" || got.Text != "hello" {
+		t.Fatalf("request = %#v", got)
+	}
+	if len(got.Attachments) != 1 || got.Attachments[0].Path != "image.png" || got.Attachments[0].Alt != "a result" {
+		t.Fatalf("attachments = %#v", got.Attachments)
+	}
+	if got.ReplyTo == nil || got.ReplyTo.ID != "parent-1" || got.RootReplyTo == nil || got.RootReplyTo.ID != "root-1" {
+		t.Fatalf("references = %#v / %#v", got.ReplyTo, got.RootReplyTo)
 	}
 }
 
