@@ -1,0 +1,32 @@
+# binaries and build output
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/dist/
+/tmp/
+
+# test and profiling output
+*.test
+*.out
+*.prof
+coverage.html
+
+# dependency and workspace output
+/vendor/
+go.work.sum
+
+# editor and operating-system files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# local configuration
+.env
+.env.local
+.env.*.local

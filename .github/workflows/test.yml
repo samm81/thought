@@ -1,0 +1,43 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ["1.27.1", "stable"]
+
+    steps:
+      - name: check out source
+        uses: actions/checkout@v6
+
+      - name: set up go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go }}
+
+      - name: verify modules
+        run: |
+          go mod verify
+          go mod download
+
+      - name: check tidy state
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: build
+        run: go build ./...
+
+      - name: test
+        run: go test -race -shuffle=on -coverprofile=coverage.out ./...
