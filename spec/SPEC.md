@@ -110,6 +110,23 @@ Running `thought` to create or edit a draft may open the user's configured edito
 
 It does not publish it.
 
+### User workflow
+
+The archive root defaults to `~/thoughts`. The user may change it with
+`THOUGHT_HOME`.
+
+The product provides these explicit commands:
+
+- `new [name]` creates a thought and opens its initial post for editing;
+- `edit <name>` opens all numbered Markdown files for that thought together;
+- `publish <name> [--target bluesky|x]` publishes to both destinations by
+  default, or only to the selected destination;
+- `status <name>` shows local publication state and remote references.
+
+When `new` is called without a name, the thought receives a timestamped
+directory name. `edit` opens the numbered files in numerical order in one
+editor session. None of these editing actions publish anything.
+
 ## Post files
 
 Each numbered Markdown file represents exactly one social post.
@@ -257,6 +274,32 @@ Each destination platform receives its own correctly linked thread.
 
 The relationship is derived entirely from the numbered files. Authors do not manually specify reply IDs.
 
+### Publication states
+
+Each numbered post has an independent state for each destination:
+
+- `pending`: the post is eligible to be published;
+- `publishing`: a publication attempt started, but its final remote outcome is
+  not known;
+- `published`: the remote post was accepted and its identifier is recorded;
+- `failed`: a transient or otherwise retryable problem prevented completion;
+- `rejected`: the post was deterministically refused or failed validation and
+  must not be retried automatically.
+
+The normal lifecycle is `pending` → `publishing` → `published`, `failed`, or
+`rejected`. A `failed` post may be retried by publishing again. A `rejected`
+post becomes eligible only after the user fixes the problem and manually edits
+its metadata state back to `pending`.
+
+If publication is interrupted while a post is `publishing`, the user must
+check the destination before editing its metadata. The user may record it as
+`published` with its remote details, or change it to `failed` or `pending` if
+the destination did not accept it. `thought` does not automatically retry an
+unresolved `publishing` post because the destination may already contain it.
+
+There is no separate reconciliation command. The human-readable TOML
+metadata is the recovery surface.
+
 ## Platform independence
 
 Bluesky and X publication state are tracked independently.
@@ -296,6 +339,10 @@ are being published and `02.md` fails on Bluesky:
 - Bluesky `03.md` is not attempted.
 - Other platforms may continue independently.
 
+The same stop rule applies when an entry is `rejected` or remains
+`publishing`. A later post must not be published without a successfully known
+parent.
+
 Later posts must not be published by skipping over a failed parent, because doing so would produce a different thread structure.
 
 ## Retry behavior
@@ -305,6 +352,12 @@ Running publication again on a partially published thought continues from the un
 Already successfully published posts are not published again.
 
 Failed posts may be retried.
+
+Transient network errors, timeouts, temporary service failures, and similar
+uncertain transport problems are recorded as `failed` and are eligible for a
+later retry. A known validation or provider rejection is recorded as
+`rejected` and requires an explicit user reset to `pending` after the problem
+is fixed.
 
 Posts blocked behind a failed earlier thread entry become eligible only after the required parent has successfully published.
 
@@ -334,6 +387,11 @@ The user may still edit their local archive freely. Those edits only change the 
 
 Remote editing or deletion can be performed manually using the platform's own app and is outside `thought`'s responsibility.
 
+If a transient error occurs after a destination accepts a post but before
+`thought` receives the success response, a retry may create a duplicate. The
+`publishing` state and manual metadata recovery exist to let the user check
+the destination before retrying that case.
+
 ## Publication metadata
 
 Every thought directory contains:
@@ -348,7 +406,8 @@ It must remain human-readable.
 
 For each numbered post and each target platform, the metadata records enough information to determine:
 
-- whether publication is pending, successful, or failed;
+- whether publication is pending, publishing, successful, failed, or
+  rejected;
 - when publication was attempted;
 - when successful publication occurred;
 - the destination platform's identifier for the published post;
@@ -357,6 +416,12 @@ For each numbered post and each target platform, the metadata records enough inf
 - the most recent publication error when publication failed.
 
 Posts that have not yet been attempted remain pending.
+
+Metadata is intentionally editable with ordinary text tools so the user can
+recover an interrupted publication or reset a rejected post after fixing it.
+
+`thought` must not silently overwrite malformed metadata or infer that an
+unresolved `publishing` entry is safe to retry.
 
 The exact representation of platform-specific identifiers may differ where required by the platform, but the metadata must retain enough information for subsequent posts in the same local thread to reply correctly.
 
