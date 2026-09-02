@@ -156,6 +156,42 @@ func TestRunStatusReportsMetadataAndRecovery(t *testing.T) {
 	}
 }
 
+func TestRunPublishTargetSelection(t *testing.T) {
+	archiveRoot := t.TempDir()
+	root, err := archive.New(archiveRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	thought, err := root.Create("demo", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bridgePath := filepath.Join(t.TempDir(), "xpost")
+	if err := os.WriteFile(bridgePath, []byte("#!/bin/sh\nprintf '%s\\n' '{\"status\":\"published\",\"remote_id\":\"post-1\"}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("THOUGHT_HOME", archiveRoot)
+	t.Setenv("THOUGHT_XPOST", bridgePath)
+
+	var output bytes.Buffer
+	if err := Run(context.Background(), []string{"publish", thought.Name(), "--target", "x"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	publication, err := metadata.Load(thought.MetadataPath(), []string{"01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := publication.Get("01", metadata.TargetX).Status; got != metadata.StatePublished {
+		t.Fatalf("X state = %q, want published", got)
+	}
+	if got := publication.Get("01", metadata.TargetBluesky).Status; got != metadata.StatePending {
+		t.Fatalf("Bluesky state = %q, want pending", got)
+	}
+	if !strings.Contains(output.String(), "x 01: published") {
+		t.Fatalf("output = %q", output.String())
+	}
+}
+
 func TestExitCode(t *testing.T) {
 	t.Parallel()
 
