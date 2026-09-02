@@ -94,7 +94,7 @@ func (r Root) Create(name string, at time.Time) (Thought, error) {
 		return Thought{}, fmt.Errorf("create archive root: %w", err)
 	}
 
-	generated := strings.TrimSpace(name) == ""
+	generated := name == ""
 	baseName := name
 	if generated {
 		baseName = at.Format("20060102-150405")

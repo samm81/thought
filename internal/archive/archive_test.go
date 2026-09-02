@@ -90,9 +90,21 @@ func TestThoughtNameSafety(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"", "..", "../escape", "/absolute", `windows\\escape`} {
+	for _, name := range []string{"", " ", "..", "../escape", "/absolute", `windows\\escape`} {
 		if _, err := root.Thought(name); err == nil {
 			t.Errorf("Thought(%q) error = nil", name)
 		}
+	}
+}
+
+func TestCreateRejectsWhitespaceName(t *testing.T) {
+	t.Parallel()
+
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := root.Create(" ", time.Now()); err == nil {
+		t.Fatal("Create() error = nil, want invalid name")
 	}
 }

@@ -1,6 +1,9 @@
 package editor
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestBuildVimTabs(t *testing.T) {
 	t.Parallel()
@@ -35,5 +38,15 @@ func TestBuildNonVim(t *testing.T) {
 		if invocation.Args[index] != want[index] {
 			t.Fatalf("args = %#v, want %#v", invocation.Args, want)
 		}
+	}
+}
+
+func TestOpenReturnsContextError(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := Open(ctx, "true", []string{"01.md"}); err != context.Canceled {
+		t.Fatalf("Open() error = %v, want %v", err, context.Canceled)
 	}
 }

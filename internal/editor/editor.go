@@ -67,6 +67,9 @@ func Open(ctx context.Context, command string, files []string) error {
 	process.Stdout = os.Stdout
 	process.Stderr = os.Stderr
 	if err := process.Run(); err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
 		return fmt.Errorf("run editor: %w", err)
 	}
 	return nil
