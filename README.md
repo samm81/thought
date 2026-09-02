@@ -1,46 +1,79 @@
+<div align="center">
+
 # thought
 
-**write markdown thoughts locally, then publish them deliberately to bluesky and x**
+**write markdown locally and publish it deliberately to bluesky and x**
 
-keep source files and publication history in a readable local archive.
+keep drafts, attachments, thread structure, and publication history in a readable local archive.
 
-> early development: the command-line surface is scaffolded, but the product
-> workflows are not implemented yet.
+</div>
 
-## install
-
-the project is not released as a package yet. install the current command
-from the main branch with:
+## Install
 
 ```sh
 go install github.com/samm81/thought/cmd/thought@main
 ```
 
-requires Go 1.27.1.
+requires Go 1.27.1. publishing also requires the maintained `xpost` bridge
+on `PATH`, or its path in `THOUGHT_XPOST`.
 
-## quickstart
-
-inspect the current command surface:
+## Quickstart
 
 ```sh
-thought --help
+archive_root="$(mktemp -d)"
+export THOUGHT_HOME="$archive_root"
+export VISUAL=true
+
+thought new daily-note
+thought status daily-note
 ```
 
-the planned commands are `new`, `edit`, `publish`, and `status`.
+`new` creates `01.md` and `meta.toml`, then opens the configured editor.
+`true` keeps this example editor-free; use `VISUAL` or `EDITOR` to choose an
+editor for normal use.
 
-## workflow
+## What you can do
 
-- **draft locally:** keep each thought in its own directory under `~/thoughts`.
-- **write in markdown:** use numbered files such as `01.md`, `02.md`, and
-  `03.md` for a single post or a thread.
-- **edit without publishing:** change local files freely; editing never makes
-  a network request.
-- **publish explicitly:** send a thought to both bluesky and x, or select one
-  destination.
-- **recover from partial publication:** keep per-post, per-target state in
-  human-readable TOML so interrupted work can be checked and repaired.
+- **draft locally:** write one post per numbered Markdown file.
+- **build threads:** publish `01.md`, `02.md`, and later files as a linked thread.
+- **attach images:** put trailing Markdown image declarations in the thought directory.
+- **publish explicitly:** send a thought to both destinations or select one target.
+- **recover safely:** inspect and repair per-post, per-target state in `meta.toml`.
 
-## archive
+## Commands
+
+| command | description |
+| --- | --- |
+| `thought new [name]` | create a thought and edit its initial post |
+| `thought edit <name>` | edit all numbered posts in one editor session |
+| `thought publish <name>` | publish to bluesky and x |
+| `thought publish <name> --target bluesky` | publish only to bluesky |
+| `thought publish <name> --target x` | publish only to x |
+| `thought status <name>` | show local states, remote references, and recovery actions |
+
+## Configuration
+
+| variable | purpose |
+| --- | --- |
+| `THOUGHT_HOME` | archive root; defaults to `~/thoughts` |
+| `VISUAL` or `EDITOR` | editor command; defaults to `vi` |
+| `THOUGHT_XPOST` | `xpost` bridge executable; defaults to `xpost` on `PATH` |
+| `XPOST_BLUESKY_HANDLE` | bluesky handle |
+| `XPOST_BLUESKY_APP_PASSWORD` | bluesky app password |
+| `XPOST_BLUESKY_PDS_URL` | optional bluesky PDS URL |
+| `XPOST_TWITTER_CONSUMER_KEY` | X consumer key |
+| `XPOST_TWITTER_CONSUMER_SECRET` | X consumer secret |
+| `XPOST_TWITTER_ACCESS_TOKEN` | X access token |
+| `XPOST_TWITTER_ACCESS_TOKEN_SECRET` | X access-token secret |
+
+build the bridge from the checked-out submodule when it is not already
+installed:
+
+```sh
+go -C third_party/xpost build -o "$HOME/.local/bin/xpost" .
+```
+
+## Archive
 
 ```text
 ~/thoughts/daily-note/
@@ -50,10 +83,11 @@ the planned commands are `new`, `edit`, `publish`, and `status`.
 └── meta.toml
 ```
 
-each numbered markdown file becomes one social post. trailing markdown image
-declarations become local attachments. `meta.toml` records publication state,
-remote identifiers, thread relationships, and errors.
+the local archive is canonical. editing never publishes. successful posts are
+never sent again, and transient failures remain retryable. an interrupted
+`publishing` entry must be checked at the destination before its TOML state is
+manually repaired.
 
-the archive remains useful with ordinary filesystem and text tools. the
-[product specification](spec/SPEC.md) defines the file format, attachment
-rules, thread behavior, and recovery semantics.
+## License
+
+the repository has not declared a license yet.
