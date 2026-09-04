@@ -297,21 +297,24 @@ override file values for temporary use and compatibility with scripts.
 Each numbered post has an independent state for each destination:
 
 - `pending`: the post is eligible to be published;
-- `publishing`: a publication attempt started, but its final remote outcome is
-  not known;
+- `publishing`: a publication attempt is active and its final remote outcome is
+  not known yet;
 - `published`: the remote post was accepted and its identifier is recorded;
 - `failed`: a transient or otherwise retryable problem prevented completion;
 - `rejected`: the post was deterministically refused or failed validation and
   must not be retried automatically.
 
 The normal lifecycle is `pending` → `publishing` → `published`, `failed`, or
-`rejected`. A `failed` post may be retried by publishing again. A `rejected`
-post becomes eligible only after the user fixes the problem and manually edits
-its metadata state back to `pending`.
+`rejected`. `thought` waits for the xpost bridge to return a terminal result or
+to time out. Transport errors, including a canceled request that returns
+control to `thought`, are recorded as `failed` before the command exits. A
+`failed` post may be retried by publishing again. A `rejected` post becomes
+eligible only after the user fixes the problem and manually edits its metadata
+state back to `pending`.
 
-If publication is interrupted while a post is `publishing`, the user must
-check the destination before editing its metadata. The user may record it as
-`published` with its remote details, or change it to `failed` or `pending` if
+If the process is forcibly terminated while a post is `publishing`, the user
+must check the destination before editing its metadata. The user may record it
+as `published` with its remote details, or change it to `failed` or `pending` if
 the destination did not accept it. `thought` does not automatically retry an
 unresolved `publishing` post because the destination may already contain it.
 

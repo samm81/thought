@@ -157,9 +157,6 @@ func (p Publisher) publishTarget(
 
 		response, err := p.client.Publish(ctx, request)
 		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return targetError(target, postName, err)
-			}
 			if markErr := record.MarkFailed("transport", err.Error()); markErr != nil {
 				return targetError(target, postName, markErr)
 			}

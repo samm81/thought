@@ -81,11 +81,12 @@ go -C third_party/xpost build -o "$HOME/.local/bin/xpost" .
 └── meta.toml
 ```
 
-the local archive is canonical. editing never publishes. successful posts are
-never sent again, and transient failures remain retryable. an interrupted
-`publishing` entry must be checked at the destination before its TOML state is
-manually repaired. commands accept either a thought name or its full directory
-path, so shell tab completion works with the archive path.
+the local archive is canonical. editing never publishes. `thought` waits for
+the bridge to return a result or time out; successful posts are never sent
+again, and transient failures remain retryable. a forcibly terminated process
+may leave a `publishing` entry that must be checked at the destination before
+its TOML state is manually repaired. commands accept either a thought name or
+its full directory path, so shell tab completion works with the archive path.
 
 ## License
 

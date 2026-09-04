@@ -150,7 +150,7 @@ func TestPublishRetriesFailedPost(t *testing.T) {
 	}
 }
 
-func TestPublishPreservesPublishingOnCancellation(t *testing.T) {
+func TestPublishMarksCanceledPostFailed(t *testing.T) {
 	t.Parallel()
 
 	thought := newThought(t, "01.md", "first")
@@ -165,8 +165,12 @@ func TestPublishPreservesPublishingOnCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := loaded.Get("01", metadata.TargetBluesky).Status; got != metadata.StatePublishing {
-		t.Fatalf("status = %q, want publishing", got)
+	record := loaded.Get("01", metadata.TargetBluesky)
+	if record.Status != metadata.StateFailed {
+		t.Fatalf("status = %q, want failed", record.Status)
+	}
+	if record.ErrorKind != "transport" || record.Error != context.Canceled.Error() {
+		t.Fatalf("failure = %#v, want transport cancellation", record)
 	}
 }
 
