@@ -77,14 +77,15 @@ func (r Root) Path() string {
 	return r.path
 }
 
-// Thought resolves a safe thought name under the archive root.
-func (r Root) Thought(name string) (Thought, error) {
-	if err := validateName(name); err != nil {
+// Thought resolves a thought name or full directory path under the archive root.
+func (r Root) Thought(value string) (Thought, error) {
+	path, err := r.resolveThoughtPath(value)
+	if err != nil {
 		return Thought{}, err
 	}
 	return Thought{
-		name: name,
-		path: filepath.Join(r.path, name),
+		name: filepath.Base(path),
+		path: path,
 	}, nil
 }
 
@@ -219,6 +220,39 @@ func expandHome(path string) (string, error) {
 		return home, nil
 	}
 	return filepath.Join(home, strings.TrimPrefix(path, "~/")), nil
+}
+
+func (r Root) resolveThoughtPath(value string) (string, error) {
+	if r.path == "" {
+		return "", errors.New("archive root is required")
+	}
+	if value == "" || strings.ContainsRune(value, 0) {
+		return "", errors.New("thought name or directory is required")
+	}
+
+	path, err := expandHome(value)
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(r.path, path)
+	}
+	path, err = filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", fmt.Errorf("resolve thought directory: %w", err)
+	}
+
+	relative, err := filepath.Rel(r.path, path)
+	if err != nil {
+		return "", fmt.Errorf("resolve thought directory: %w", err)
+	}
+	if relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) || strings.Contains(relative, string(filepath.Separator)) {
+		return "", fmt.Errorf("thought directory %q must be inside the archive root", value)
+	}
+	if err := validateName(filepath.Base(path)); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func validateName(name string) error {

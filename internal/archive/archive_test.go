@@ -97,6 +97,39 @@ func TestThoughtNameSafety(t *testing.T) {
 	}
 }
 
+func TestThoughtAcceptsFullDirectoryPath(t *testing.T) {
+	t.Parallel()
+
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := root.Create("20260904-215733", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := root.Thought(want.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name() != want.Name() || got.Path() != want.Path() {
+		t.Fatalf("Thought() = %#v, want name %q and path %q", got, want.Name(), want.Path())
+	}
+}
+
+func TestThoughtRejectsDirectoryOutsideArchive(t *testing.T) {
+	t.Parallel()
+
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "20260904-215733")
+	if _, err := root.Thought(outside); err == nil {
+		t.Fatal("Thought() error = nil, want outside path rejection")
+	}
+}
+
 func TestCreateRejectsWhitespaceName(t *testing.T) {
 	t.Parallel()
 

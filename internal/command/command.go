@@ -26,9 +26,9 @@ const usageText = `usage: thought <command> [arguments]
 
 commands:
   new [name]                      create and edit a thought
-  edit <name>                     edit a thought
-  publish <name> [--target ...]   publish a thought
-  status <name>                   show local publication state
+  edit <name-or-directory>        edit a thought
+  publish <name-or-directory> [--target ...]   publish a thought
+  status <name-or-directory>      show local publication state
 
 options:
   -h, --help                     show this help
@@ -107,7 +107,7 @@ func runNew(ctx context.Context, arguments []string, output io.Writer) error {
 
 func runEdit(ctx context.Context, arguments []string) error {
 	if len(arguments) != 1 {
-		return usageError("edit requires one thought name")
+		return usageError("edit requires one thought name or directory")
 	}
 	root, err := archive.FromEnvironment()
 	if err != nil {
@@ -149,7 +149,7 @@ func runStatus(arguments []string, output io.Writer) error {
 		return err
 	}
 	if len(arguments) != 1 {
-		return usageError("status requires one thought name")
+		return usageError("status requires one thought name or directory")
 	}
 	root, err := archive.FromEnvironment()
 	if err != nil {
@@ -232,7 +232,7 @@ func statusAction(state metadata.State) string {
 
 func parsePublishArguments(arguments []string) (string, []string, error) {
 	if len(arguments) == 0 || strings.TrimSpace(arguments[0]) == "" || strings.HasPrefix(arguments[0], "-") {
-		return "", nil, usageError("publish requires one thought name")
+		return "", nil, usageError("publish requires one thought name or directory")
 	}
 	name := arguments[0]
 	targets := make([]string, 0)

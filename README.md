@@ -45,11 +45,11 @@ editor for normal use.
 | command | description |
 | --- | --- |
 | `thought new [name]` | create a thought and edit its initial post |
-| `thought edit <name>` | edit all numbered posts in one editor session |
-| `thought publish <name>` | publish to bluesky and x |
-| `thought publish <name> --target bluesky` | publish only to bluesky |
-| `thought publish <name> --target x` | publish only to x |
-| `thought status <name>` | show local states, remote references, and recovery actions |
+| `thought edit <name-or-directory>` | edit all numbered posts in one editor session |
+| `thought publish <name-or-directory>` | publish to bluesky and x |
+| `thought publish <name-or-directory> --target bluesky` | publish only to bluesky |
+| `thought publish <name-or-directory> --target x` | publish only to x |
+| `thought status <name-or-directory>` | show local states, remote references, and recovery actions |
 
 ## Configuration
 
@@ -86,7 +86,8 @@ go -C third_party/xpost build -o "$HOME/.local/bin/xpost" .
 the local archive is canonical. editing never publishes. successful posts are
 never sent again, and transient failures remain retryable. an interrupted
 `publishing` entry must be checked at the destination before its TOML state is
-manually repaired.
+manually repaired. commands accept either a thought name or its full directory
+path, so shell tab completion works with the archive path.
 
 ## License
 

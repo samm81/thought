@@ -174,7 +174,7 @@ func TestRunPublishTargetSelection(t *testing.T) {
 	t.Setenv("THOUGHT_XPOST", bridgePath)
 
 	var output bytes.Buffer
-	if err := Run(context.Background(), []string{"publish", thought.Name(), "--target", "x"}, &output); err != nil {
+	if err := Run(context.Background(), []string{"publish", thought.Path(), "--target", "x"}, &output); err != nil {
 		t.Fatal(err)
 	}
 	publication, err := metadata.Load(thought.MetadataPath(), []string{"01"})
