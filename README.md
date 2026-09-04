@@ -22,7 +22,6 @@ on `PATH`, or its path in `THOUGHT_XPOST`.
 ```sh
 archive_root="$(mktemp -d)"
 export THOUGHT_HOME="$archive_root"
-export VISUAL=true
 
 thought new daily-note
 thought status daily-note
