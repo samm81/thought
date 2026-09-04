@@ -53,18 +53,16 @@ editor for normal use.
 
 ## Configuration
 
-| variable | purpose |
+| setting | purpose |
 | --- | --- |
+| `~/.config/xpost/config.toml` | xpost provider credentials and settings; override with `xpost --config PATH` |
 | `THOUGHT_HOME` | archive root; defaults to `~/thoughts` |
 | `VISUAL` or `EDITOR` | editor command; defaults to `vi` |
 | `THOUGHT_XPOST` | `xpost` bridge executable; defaults to `xpost` on `PATH` |
-| `XPOST_BLUESKY_HANDLE` | bluesky handle |
-| `XPOST_BLUESKY_APP_PASSWORD` | bluesky app password |
-| `XPOST_BLUESKY_PDS_URL` | optional bluesky PDS URL |
-| `XPOST_TWITTER_CONSUMER_KEY` | X consumer key |
-| `XPOST_TWITTER_CONSUMER_SECRET` | X consumer secret |
-| `XPOST_TWITTER_ACCESS_TOKEN` | X access token |
-| `XPOST_TWITTER_ACCESS_TOKEN_SECRET` | X access-token secret |
+
+`xpost` still accepts its `XPOST_*` environment variables as compatibility
+overrides. See the [xpost configuration example](third_party/xpost/README.md#configuration)
+for the TOML format.
 
 build the bridge from the checked-out submodule when it is not already
 installed:

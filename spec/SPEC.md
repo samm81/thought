@@ -280,6 +280,18 @@ Each destination platform receives its own correctly linked thread.
 
 The relationship is derived entirely from the numbered files. Authors do not manually specify reply IDs.
 
+### Publishing configuration
+
+Publishing credentials for Bluesky and X are kept in xpost's human-readable
+TOML configuration file rather than in the thought archive. The default file
+is `~/.config/xpost/config.toml`; xpost may also be given an explicit config
+file path.
+
+The configuration contains independent sections for each publishing
+destination. A missing default file is allowed, but publishing must report
+which destination configuration is missing. Existing environment variables may
+override file values for temporary use and compatibility with scripts.
+
 ### Publication states
 
 Each numbered post has an independent state for each destination:
