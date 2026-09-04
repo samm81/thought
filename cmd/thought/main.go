@@ -1,3 +1,4 @@
+// Package main provides the thought command-line executable.
 package main
 
 import (
@@ -12,10 +13,16 @@ import (
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	exitCode := 0
 
 	if err := command.Run(ctx, os.Args[1:], os.Stdout); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "thought:", err)
-		os.Exit(command.ExitCode(err))
+		exitCode = command.ExitCode(err)
+	}
+
+	stop()
+
+	if exitCode != 0 {
+		os.Exit(exitCode)
 	}
 }

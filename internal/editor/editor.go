@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -26,6 +27,7 @@ func FromEnvironment() string {
 			return value
 		}
 	}
+
 	return defaultCommand
 }
 
@@ -35,6 +37,7 @@ func Build(command string, files []string) (Invocation, error) {
 	if len(fields) == 0 {
 		return Invocation{}, errors.New("editor command is required")
 	}
+
 	if len(files) == 0 {
 		return Invocation{}, errors.New("at least one editor file is required")
 	}
@@ -48,11 +51,14 @@ func Build(command string, files []string) (Invocation, error) {
 				break
 			}
 		}
+
 		args = append(args, "")
 		copy(args[insertAt+1:], args[insertAt:])
 		args[insertAt] = "-p"
 	}
+
 	args = append(args, files...)
+
 	return Invocation{Name: fields[0], Args: args}, nil
 }
 
@@ -62,26 +68,26 @@ func Open(ctx context.Context, command string, files []string) error {
 	if err != nil {
 		return err
 	}
-	process := exec.CommandContext(ctx, invocation.Name, invocation.Args...)
+
+	// The editor is an explicit user configuration, so arbitrary executable and arguments are intentional.
+	process := exec.CommandContext(ctx, invocation.Name, invocation.Args...) //nolint:gosec // user-configured editor command
 	process.Stdin = os.Stdin
 	process.Stdout = os.Stdout
+
 	process.Stderr = os.Stderr
 	if err := process.Run(); err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return contextErr
 		}
+
 		return fmt.Errorf("run editor: %w", err)
 	}
+
 	return nil
 }
 
 func contains(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, wanted)
 }
 
 func isVim(command string) bool {

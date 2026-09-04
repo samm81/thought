@@ -14,6 +14,8 @@ import (
 	"github.com/samm81/thought/internal/metadata"
 )
 
+const publishCommand = "publish"
+
 func TestRun(t *testing.T) {
 	t.Parallel()
 
@@ -51,10 +53,12 @@ func TestRun(t *testing.T) {
 			t.Parallel()
 
 			var output bytes.Buffer
+
 			err := Run(t.Context(), test.arguments, &output)
 			if !errors.Is(err, test.wantError) {
 				t.Fatalf("Run() error = %v, want %v", err, test.wantError)
 			}
+
 			if test.wantErrorText != "" && (err == nil || !strings.Contains(err.Error(), test.wantErrorText)) {
 				t.Fatalf("Run() error = %q, want it to contain %q", err, test.wantErrorText)
 			}
@@ -62,6 +66,7 @@ func TestRun(t *testing.T) {
 			if test.wantOutput == usageText && output.String() != test.wantOutput {
 				t.Fatalf("Run() output = %q, want %q", output.String(), test.wantOutput)
 			}
+
 			if test.wantOutput != usageText && !strings.Contains(output.String(), test.wantOutput) {
 				t.Fatalf("Run() output = %q, want it to contain %q", output.String(), test.wantOutput)
 			}
@@ -70,8 +75,11 @@ func TestRun(t *testing.T) {
 }
 
 func TestRunRejectsInvalidPublishArguments(t *testing.T) {
+	t.Parallel()
+
 	var output bytes.Buffer
-	err := Run(context.Background(), []string{"publish", "one", "two"}, &output)
+
+	err := Run(context.Background(), []string{publishCommand, "one", "two"}, &output)
 	if !errors.Is(err, ErrUsage) {
 		t.Fatalf("Run() error = %v, want usage error", err)
 	}
@@ -87,6 +95,7 @@ func TestRunNewCreatesThought(t *testing.T) {
 	if err := Run(context.Background(), []string{"new", "demo"}, &output); err != nil {
 		t.Fatal(err)
 	}
+
 	thoughtPath := strings.TrimSpace(output.String())
 	for _, path := range []string{
 		filepath.Join(thoughtPath, "01.md"),
@@ -100,10 +109,12 @@ func TestRunNewCreatesThought(t *testing.T) {
 
 func TestRunStatusReportsMetadataAndRecovery(t *testing.T) {
 	archiveRoot := t.TempDir()
+
 	root, err := archive.New(archiveRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	thought, err := root.Create("demo", time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -111,35 +122,44 @@ func TestRunStatusReportsMetadataAndRecovery(t *testing.T) {
 
 	publication := metadata.New([]string{"01"})
 	attemptedAt := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+
 	published := publication.Get("01", metadata.TargetBluesky)
 	if err := published.MarkPublishing(attemptedAt); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := published.MarkPublished(attemptedAt.Add(time.Second), metadata.Reference{ID: "post-1", CID: "cid-1"}, "https://bsky.app/post/1"); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := publication.Set("01", metadata.TargetBluesky, published); err != nil {
 		t.Fatal(err)
 	}
+
 	rejected := publication.Get("01", metadata.TargetX)
 	if err := rejected.MarkPublishing(attemptedAt); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := rejected.MarkRejected("validation", "too long"); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := publication.Set("01", metadata.TargetX, rejected); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := metadata.Save(thought.MetadataPath(), publication); err != nil {
 		t.Fatal(err)
 	}
 
 	t.Setenv("THOUGHT_HOME", archiveRoot)
+
 	var output bytes.Buffer
 	if err := Run(context.Background(), []string{"status", "demo"}, &output); err != nil {
 		t.Fatal(err)
 	}
+
 	status := output.String()
 	for _, value := range []string{
 		`01 bluesky: published`,
@@ -158,35 +178,40 @@ func TestRunStatusReportsMetadataAndRecovery(t *testing.T) {
 
 func TestRunPublishTargetSelection(t *testing.T) {
 	archiveRoot := t.TempDir()
+
 	root, err := archive.New(archiveRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	thought, err := root.Create("demo", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	bridgePath := filepath.Join(t.TempDir(), "xpost")
-	if err := os.WriteFile(bridgePath, []byte("#!/bin/sh\nprintf '%s\\n' '{\"status\":\"published\",\"remote_id\":\"post-1\"}'\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+
+	bridgePath := testBridge(t)
+
 	t.Setenv("THOUGHT_HOME", archiveRoot)
 	t.Setenv("THOUGHT_XPOST", bridgePath)
 
 	var output bytes.Buffer
-	if err := Run(context.Background(), []string{"publish", thought.Path(), "--target", "x"}, &output); err != nil {
+	if err := Run(context.Background(), []string{publishCommand, thought.Path(), "--target", "x"}, &output); err != nil {
 		t.Fatal(err)
 	}
+
 	publication, err := metadata.Load(thought.MetadataPath(), []string{"01"})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if got := publication.Get("01", metadata.TargetX).Status; got != metadata.StatePublished {
 		t.Fatalf("X state = %q, want published", got)
 	}
+
 	if got := publication.Get("01", metadata.TargetBluesky).Status; got != metadata.StatePending {
 		t.Fatalf("Bluesky state = %q, want pending", got)
 	}
+
 	if !strings.Contains(output.String(), "x 01: published") {
 		t.Fatalf("output = %q", output.String())
 	}
@@ -194,79 +219,121 @@ func TestRunPublishTargetSelection(t *testing.T) {
 
 func TestRunPublishSelectsMostRecentThoughtAfterConfirmation(t *testing.T) {
 	archiveRoot := t.TempDir()
+
 	root, err := archive.New(archiveRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	older, err := root.Create("older", time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	newer, err := root.Create("newer", time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(older.Path(), "01.md"), []byte("old"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(newer.Path(), "01.md"), []byte("new"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	oldAt := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
-	newAt := oldAt.Add(time.Minute)
-	if err := os.Chtimes(older.Path(), oldAt, oldAt); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chtimes(newer.Path(), newAt, newAt); err != nil {
-		t.Fatal(err)
-	}
-	bridgePath := filepath.Join(t.TempDir(), "xpost")
-	if err := os.WriteFile(bridgePath, []byte("#!/bin/sh\nprintf '%s\\n' '{\"status\":\"published\",\"remote_id\":\"post-1\"}'\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+
+	older, newer := recentThoughts(t, root)
+	bridgePath := testBridge(t)
 
 	t.Setenv("THOUGHT_HOME", archiveRoot)
 	t.Setenv("THOUGHT_XPOST", bridgePath)
+
 	var output bytes.Buffer
-	if err := run(context.Background(), []string{"publish"}, strings.NewReader("y\n"), &output); err != nil {
+	if err := run(context.Background(), []string{publishCommand}, strings.NewReader("y\n"), &output); err != nil {
 		t.Fatal(err)
 	}
+
 	if !strings.Contains(output.String(), `publish "newer" to bluesky and x? [y/N]`) {
 		t.Fatalf("output = %q, want confirmation for newer thought", output.String())
 	}
+
 	publication, err := metadata.Load(newer.MetadataPath(), []string{"01"})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	for _, target := range metadata.Targets() {
 		if got := publication.Get("01", target).Status; got != metadata.StatePublished {
 			t.Fatalf("%s state = %q, want published", target, got)
 		}
 	}
+
 	if _, err := os.Stat(older.MetadataPath()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("older metadata stat error = %v, want absent metadata", err)
 	}
 }
 
+func testBridge(t *testing.T) string {
+	t.Helper()
+
+	bridgePath := filepath.Join(t.TempDir(), "xpost")
+	if err := os.WriteFile(bridgePath, []byte("#!/bin/sh\nprintf '%s\\n' '{\"status\":\"published\",\"remote_id\":\"post-1\"}'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Chmod(bridgePath, 0o700); err != nil { //nolint:gosec // test bridge must be executable and is private to t.TempDir
+		t.Fatal(err)
+	}
+
+	return bridgePath
+}
+
+func recentThoughts(t *testing.T, root archive.Root) (archive.Thought, archive.Thought) {
+	t.Helper()
+
+	older, err := root.Create("older", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newer, err := root.Create("newer", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, item := range []struct {
+		thought archive.Thought
+		content string
+	}{
+		{thought: older, content: "old"},
+		{thought: newer, content: "new"},
+	} {
+		if err := os.WriteFile(filepath.Join(item.thought.Path(), "01.md"), []byte(item.content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	oldAt := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+
+	newAt := oldAt.Add(time.Minute)
+	if err := os.Chtimes(older.Path(), oldAt, oldAt); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Chtimes(newer.Path(), newAt, newAt); err != nil {
+		t.Fatal(err)
+	}
+
+	return older, newer
+}
+
 func TestRunPublishDeclinesMostRecentThought(t *testing.T) {
 	archiveRoot := t.TempDir()
+
 	root, err := archive.New(archiveRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	thought, err := root.Create("demo", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	t.Setenv("THOUGHT_HOME", archiveRoot)
 
 	var output bytes.Buffer
-	if err := run(context.Background(), []string{"publish"}, strings.NewReader("n\n"), &output); err != nil {
+	if err := run(context.Background(), []string{publishCommand}, strings.NewReader("n\n"), &output); err != nil {
 		t.Fatal(err)
 	}
+
 	if !strings.Contains(output.String(), `publish "demo" to bluesky and x? [y/N]`) || !strings.Contains(output.String(), "publication cancelled") {
 		t.Fatalf("output = %q, want declined confirmation", output.String())
 	}
+
 	if _, err := os.Stat(thought.MetadataPath()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("metadata stat error = %v, want absent metadata", err)
 	}
@@ -274,37 +341,46 @@ func TestRunPublishDeclinesMostRecentThought(t *testing.T) {
 
 func TestRunPublishRejectsAlreadyPublishedMostRecentThought(t *testing.T) {
 	archiveRoot := t.TempDir()
+
 	root, err := archive.New(archiveRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	thought, err := root.Create("demo", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	publication := metadata.New([]string{"01"})
 	for _, target := range metadata.Targets() {
 		record := publication.Get("01", target)
 		if err := record.MarkPublishing(time.Now()); err != nil {
 			t.Fatal(err)
 		}
+
 		if err := record.MarkPublished(time.Now(), metadata.Reference{ID: target + "-1"}, ""); err != nil {
 			t.Fatal(err)
 		}
+
 		if err := publication.Set("01", target, record); err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	if err := metadata.Save(thought.MetadataPath(), publication); err != nil {
 		t.Fatal(err)
 	}
+
 	t.Setenv("THOUGHT_HOME", archiveRoot)
 
 	var output bytes.Buffer
-	err = run(context.Background(), []string{"publish"}, strings.NewReader("y\n"), &output)
+
+	err = run(context.Background(), []string{publishCommand}, strings.NewReader("y\n"), &output)
 	if err == nil || !strings.Contains(err.Error(), "already published") {
 		t.Fatalf("run() error = %v, want already published error", err)
 	}
+
 	if strings.Contains(output.String(), "[y/N]") {
 		t.Fatalf("output = %q, want no confirmation for published thought", output.String())
 	}

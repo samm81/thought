@@ -19,10 +19,8 @@ import (
 	"github.com/samm81/thought/internal/xpost"
 )
 
-var (
-	// ErrUsage indicates that command-line input is invalid.
-	ErrUsage = errors.New("usage error")
-)
+// ErrUsage indicates that command-line input is invalid.
+var ErrUsage = errors.New("usage error")
 
 const usageText = `usage: thought <command> [arguments]
 
@@ -45,6 +43,7 @@ func run(ctx context.Context, arguments []string, input io.Reader, output io.Wri
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
 	if len(arguments) == 0 || arguments[0] == "-h" || arguments[0] == "--help" || arguments[0] == "help" {
 		return writeUsage(output)
 	}
@@ -68,15 +67,19 @@ func ExitCode(err error) int {
 	if err == nil {
 		return 0
 	}
+
 	if errors.Is(err, context.Canceled) {
 		return 130
 	}
+
 	if errors.Is(err, context.DeadlineExceeded) {
 		return 124
 	}
+
 	if errors.Is(err, ErrUsage) {
 		return 2
 	}
+
 	return 1
 }
 
@@ -84,30 +87,39 @@ func runNew(ctx context.Context, arguments []string, output io.Writer) error {
 	if err := requireOutput(output); err != nil {
 		return err
 	}
-	if len(arguments) > 1 {
+
+	var name string
+
+	switch len(arguments) {
+	case 0:
+	case 1:
+		name = arguments[0]
+	default:
 		return usageError("new accepts at most one name")
 	}
-	name := ""
-	if len(arguments) == 1 {
-		name = arguments[0]
-	}
+
 	root, err := archive.FromEnvironment()
 	if err != nil {
 		return err
 	}
+
 	thought, err := root.Create(name, time.Now())
 	if err != nil {
 		return err
 	}
+
 	if err := metadata.Save(thought.MetadataPath(), metadata.New([]string{"01"})); err != nil {
 		return fmt.Errorf("initialize metadata: %w", err)
 	}
+
 	if err := editor.Open(ctx, editor.FromEnvironment(), []string{filepath.Join(thought.Path(), "01.md")}); err != nil {
 		return err
 	}
+
 	if _, err := fmt.Fprintln(output, thought.Path()); err != nil {
 		return fmt.Errorf("write new thought: %w", err)
 	}
+
 	return nil
 }
 
@@ -115,22 +127,27 @@ func runEdit(ctx context.Context, arguments []string) error {
 	if len(arguments) != 1 {
 		return usageError("edit requires one thought name or directory")
 	}
+
 	root, err := archive.FromEnvironment()
 	if err != nil {
 		return err
 	}
+
 	thought, err := root.Thought(arguments[0])
 	if err != nil {
 		return err
 	}
+
 	posts, err := thought.Posts()
 	if err != nil {
 		return fmt.Errorf("discover posts: %w", err)
 	}
+
 	paths := make([]string, 0, len(posts))
 	for _, post := range posts {
 		paths = append(paths, post.Path)
 	}
+
 	return editor.Open(ctx, editor.FromEnvironment(), paths)
 }
 
@@ -138,70 +155,92 @@ func runPublish(ctx context.Context, arguments []string, input io.Reader, output
 	if err := requireOutput(output); err != nil {
 		return err
 	}
+
 	name, targets, err := parsePublishArguments(arguments)
 	if err != nil {
 		return err
 	}
+
 	root, err := archive.FromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	var thought archive.Thought
-	if name == "" {
-		thought, err = root.MostRecentThought()
-		if err != nil {
-			return fmt.Errorf("find most recent thought: %w", err)
-		}
-		needsPublication, err := publish.NeedsPublication(thought, targets)
-		if err != nil {
-			return fmt.Errorf("inspect most recent thought: %w", err)
-		}
-		if !needsPublication {
-			return fmt.Errorf("most recent thought %q is already published; specify a thought to publish", thought.Name())
-		}
+	thought, needsConfirmation, err := resolvePublishThought(root, name, targets)
+	if err != nil {
+		return err
+	}
+
+	if needsConfirmation {
 		confirmed, err := confirmPublish(input, output, thought, targets)
 		if err != nil {
 			return err
 		}
+
 		if !confirmed {
 			return nil
 		}
-	} else {
-		thought, err = root.Thought(name)
-		if err != nil {
-			return err
-		}
 	}
+
 	return publish.New(xpost.FromEnvironment()).Publish(ctx, thought, targets, output)
+}
+
+func resolvePublishThought(root archive.Root, name string, targets []string) (archive.Thought, bool, error) {
+	if name != "" {
+		thought, err := root.Thought(name)
+		return thought, false, err
+	}
+
+	thought, err := root.MostRecentThought()
+	if err != nil {
+		return archive.Thought{}, false, fmt.Errorf("find most recent thought: %w", err)
+	}
+
+	needsPublication, err := publish.NeedsPublication(thought, targets)
+	if err != nil {
+		return archive.Thought{}, false, fmt.Errorf("inspect most recent thought: %w", err)
+	}
+
+	if !needsPublication {
+		return archive.Thought{}, false, fmt.Errorf("most recent thought %q is already published; specify a thought to publish", thought.Name())
+	}
+
+	return thought, true, nil
 }
 
 func runStatus(arguments []string, output io.Writer) error {
 	if err := requireOutput(output); err != nil {
 		return err
 	}
+
 	if len(arguments) != 1 {
 		return usageError("status requires one thought name or directory")
 	}
+
 	root, err := archive.FromEnvironment()
 	if err != nil {
 		return err
 	}
+
 	thought, err := root.Thought(arguments[0])
 	if err != nil {
 		return err
 	}
+
 	posts, err := thought.Posts()
 	if err != nil {
 		return fmt.Errorf("discover posts: %w", err)
 	}
+
 	publication, err := metadata.Load(thought.MetadataPath(), postNames(posts))
 	if err != nil {
 		return fmt.Errorf("load publication metadata: %w", err)
 	}
+
 	if _, err := fmt.Fprintf(output, "thought: %s\n", thought.Name()); err != nil {
 		return fmt.Errorf("write status: %w", err)
 	}
+
 	for _, post := range posts {
 		postName := fmt.Sprintf("%02d", post.Number)
 		for _, target := range metadata.Targets() {
@@ -211,6 +250,7 @@ func runStatus(arguments []string, output io.Writer) error {
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -228,12 +268,15 @@ func writeRecordStatus(output io.Writer, post, target string, record metadata.Re
 	writeStatusString(&line, "root_cid", record.RootCID)
 	writeStatusString(&line, "error_kind", record.ErrorKind)
 	writeStatusString(&line, "error", record.Error)
+
 	if action := statusAction(record.Status); action != "" {
 		writeStatusString(&line, "action", action)
 	}
+
 	if _, err := fmt.Fprintln(output, line.String()); err != nil {
 		return err
 	}
+
 	return nil
 }
 
@@ -251,6 +294,8 @@ func writeStatusTime(output *strings.Builder, key string, value *time.Time) {
 
 func statusAction(state metadata.State) string {
 	switch state {
+	case metadata.StatePending, metadata.StatePublished:
+		return ""
 	case metadata.StatePublishing:
 		return "inspect destination and edit meta.toml to published, failed, or pending"
 	case metadata.StateFailed:
@@ -265,6 +310,7 @@ func statusAction(state metadata.State) string {
 func parsePublishArguments(arguments []string) (string, []string, error) {
 	name := ""
 	targets := make([]string, 0)
+
 	for index := 0; index < len(arguments); index++ {
 		argument := arguments[index]
 		switch {
@@ -272,6 +318,7 @@ func parsePublishArguments(arguments []string) (string, []string, error) {
 			if index+1 >= len(arguments) {
 				return "", nil, usageError("--target requires a value")
 			}
+
 			index++
 			targets = append(targets, arguments[index])
 		case strings.HasPrefix(argument, "--target="):
@@ -284,6 +331,7 @@ func parsePublishArguments(arguments []string) (string, []string, error) {
 			name = argument
 		}
 	}
+
 	return name, targets, nil
 }
 
@@ -291,6 +339,7 @@ func confirmPublish(input io.Reader, output io.Writer, thought archive.Thought, 
 	if input == nil {
 		return false, errors.New("input reader is nil")
 	}
+
 	if _, err := fmt.Fprintf(output, "publish %q to %s? [y/N] ", thought.Name(), publishTargetText(targets)); err != nil {
 		return false, fmt.Errorf("write publication confirmation: %w", err)
 	}
@@ -299,13 +348,16 @@ func confirmPublish(input io.Reader, output io.Writer, thought archive.Thought, 
 	if err != nil && !errors.Is(err, io.EOF) {
 		return false, fmt.Errorf("read publication confirmation: %w", err)
 	}
+
 	answer = strings.ToLower(strings.TrimSpace(answer))
 	if answer == "y" || answer == "yes" {
 		return true, nil
 	}
+
 	if _, err := fmt.Fprintln(output, "publication cancelled"); err != nil {
 		return false, fmt.Errorf("write publication cancellation: %w", err)
 	}
+
 	return false, nil
 }
 
@@ -313,6 +365,7 @@ func publishTargetText(targets []string) string {
 	if len(targets) == 0 {
 		return "bluesky and x"
 	}
+
 	return strings.Join(targets, ", ")
 }
 
@@ -321,6 +374,7 @@ func postNames(posts []archive.Post) []string {
 	for _, post := range posts {
 		names = append(names, fmt.Sprintf("%02d", post.Number))
 	}
+
 	return names
 }
 
@@ -328,6 +382,7 @@ func requireOutput(output io.Writer) error {
 	if output == nil {
 		return errors.New("output writer is nil")
 	}
+
 	return nil
 }
 
@@ -339,8 +394,10 @@ func writeUsage(output io.Writer) error {
 	if err := requireOutput(output); err != nil {
 		return err
 	}
+
 	if _, err := io.WriteString(output, usageText); err != nil {
 		return fmt.Errorf("write usage: %w", err)
 	}
+
 	return nil
 }

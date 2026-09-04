@@ -41,14 +41,17 @@ func NeedsPublication(thought archive.Thought, targetNames []string) (bool, erro
 	if err != nil {
 		return false, fmt.Errorf("discover posts: %w", err)
 	}
+
 	targets, err := normalizeTargets(targetNames)
 	if err != nil {
 		return false, err
 	}
+
 	publication, err := metadata.Load(thought.MetadataPath(), postNames(posts))
 	if err != nil {
 		return false, fmt.Errorf("load publication metadata: %w", err)
 	}
+
 	for _, post := range posts {
 		postName := fmt.Sprintf("%02d", post.Number)
 		for _, target := range targets {
@@ -57,6 +60,7 @@ func NeedsPublication(thought archive.Thought, targetNames []string) (bool, erro
 			}
 		}
 	}
+
 	return false, nil
 }
 
@@ -66,40 +70,50 @@ func (p Publisher) Publish(ctx context.Context, thought archive.Thought, targetN
 	if err != nil {
 		return fmt.Errorf("discover posts: %w", err)
 	}
+
 	documents := make([]markdown.Document, len(posts))
 	for index, post := range posts {
 		document, err := markdown.ParseFile(post.Path, thought.Path())
 		if err != nil {
 			return fmt.Errorf("parse post %02d: %w", post.Number, err)
 		}
+
 		documents[index] = document
 	}
+
 	targets, err := normalizeTargets(targetNames)
 	if err != nil {
 		return err
 	}
+
 	publication, err := metadata.Load(thought.MetadataPath(), postNames(posts))
 	if err != nil {
 		return fmt.Errorf("load publication metadata: %w", err)
 	}
+
 	if output == nil {
 		output = io.Discard
 	}
 
 	var targetErrors []error
+
 	for _, target := range targets {
 		err := p.publishTarget(ctx, thought, posts, documents, target, &publication, output)
 		if err == nil {
 			continue
 		}
+
 		targetErrors = append(targetErrors, err)
+
 		if ctx.Err() != nil {
 			break
 		}
 	}
+
 	if len(targetErrors) > 0 {
 		return errors.Join(targetErrors...)
 	}
+
 	return nil
 }
 
@@ -112,136 +126,249 @@ func (p Publisher) publishTarget(
 	publication *metadata.Document,
 	output io.Writer,
 ) error {
-	var parent *xpost.Reference
-	var root *xpost.Reference
+	var (
+		parent *xpost.Reference
+		root   *xpost.Reference
+	)
+
 	for index, post := range posts {
 		postName := fmt.Sprintf("%02d", post.Number)
+
 		record := publication.Get(postName, target)
-		switch record.Status {
-		case metadata.StatePublished:
-			current := &xpost.Reference{ID: record.RemoteID, CID: record.RemoteCID}
-			if strings.TrimSpace(current.ID) == "" {
-				return targetError(target, postName, errors.New("published metadata has no remote id"))
-			}
-			parent = current
-			if root == nil {
-				storedRoot := record.RootReply()
-				if storedRoot != nil {
-					root = &xpost.Reference{ID: storedRoot.ID, CID: storedRoot.CID}
-				} else {
-					root = current
-				}
-			}
-			continue
-		case metadata.StatePublishing:
-			return targetError(target, postName, errors.New("publication is still publishing; inspect the destination and edit metadata"))
-		case metadata.StateRejected:
-			return targetError(target, postName, errors.New("publication was rejected; fix the post and reset metadata to pending"))
-		case metadata.StatePending, metadata.StateFailed:
-		default:
-			return targetError(target, postName, fmt.Errorf("unsupported publication state %q", record.Status))
-		}
 
-		if index > 0 && parent == nil {
-			return targetError(target, postName, errors.New("parent post is not published"))
-		}
-		if parent != nil {
-			record.ParentID = parent.ID
-			record.ParentCID = parent.CID
-			if root == nil {
-				root = parent
-			}
-			record.RootID = root.ID
-			record.RootCID = root.CID
-		}
-		if err := record.MarkPublishing(p.now()); err != nil {
-			return targetError(target, postName, err)
-		}
-		if err := publication.Set(postName, target, record); err != nil {
-			return targetError(target, postName, err)
-		}
-		if err := metadata.Save(thought.MetadataPath(), *publication); err != nil {
-			return targetError(target, postName, fmt.Errorf("save publishing state: %w", err))
-		}
-
-		request := xpost.Request{
-			Target: target,
-			Text:   documents[index].Text,
-		}
-		request.Attachments = make([]xpost.Attachment, 0, len(documents[index].Attachments))
-		for _, attachment := range documents[index].Attachments {
-			request.Attachments = append(request.Attachments, xpost.Attachment{
-				Path: attachment.Path,
-				Alt:  attachment.Alt,
-			})
-		}
-		if parent != nil {
-			request.ReplyTo = &xpost.Reference{ID: parent.ID, CID: parent.CID}
-			request.RootReplyTo = &xpost.Reference{ID: root.ID, CID: root.CID}
-		}
-
-		response, err := p.client.Publish(ctx, request)
+		published, err := advancePublishedRecord(record, &parent, &root)
 		if err != nil {
-			if markErr := record.MarkFailed("transport", err.Error()); markErr != nil {
-				return targetError(target, postName, markErr)
-			}
-			if saveErr := publication.Set(postName, target, record); saveErr != nil {
-				return targetError(target, postName, saveErr)
-			}
-			if saveErr := metadata.Save(thought.MetadataPath(), *publication); saveErr != nil {
-				return targetError(target, postName, fmt.Errorf("save failed state: %w", saveErr))
-			}
 			return targetError(target, postName, err)
 		}
 
-		switch response.Status {
-		case "failed":
-			errorKind, errorMessage := responseError(response, "transport")
-			if markErr := record.MarkFailed(errorKind, errorMessage); markErr != nil {
-				return targetError(target, postName, markErr)
-			}
-			if err := publication.Set(postName, target, record); err != nil {
-				return targetError(target, postName, err)
-			}
-			if err := metadata.Save(thought.MetadataPath(), *publication); err != nil {
-				return targetError(target, postName, fmt.Errorf("save failed state: %w", err))
-			}
-			return targetError(target, postName, errors.New(errorMessage))
-		case "rejected":
-			errorKind, errorMessage := responseError(response, "validation")
-			if markErr := record.MarkRejected(errorKind, errorMessage); markErr != nil {
-				return targetError(target, postName, markErr)
-			}
-			if err := publication.Set(postName, target, record); err != nil {
-				return targetError(target, postName, err)
-			}
-			if err := metadata.Save(thought.MetadataPath(), *publication); err != nil {
-				return targetError(target, postName, fmt.Errorf("save rejected state: %w", err))
-			}
-			return targetError(target, postName, errors.New(errorMessage))
-		case "published":
-			result := metadata.Reference{ID: response.RemoteID, CID: response.RemoteCID}
-			if err := record.MarkPublished(p.now(), result, response.URL); err != nil {
-				return targetError(target, postName, err)
-			}
-			if err := publication.Set(postName, target, record); err != nil {
-				return targetError(target, postName, err)
-			}
-			if err := metadata.Save(thought.MetadataPath(), *publication); err != nil {
-				return targetError(target, postName, fmt.Errorf("save published state: %w", err))
-			}
-			current := &xpost.Reference{ID: response.RemoteID, CID: response.RemoteCID}
-			parent = current
-			if root == nil {
-				root = current
-			}
-			if _, err := fmt.Fprintf(output, "%s %s: published\n", target, postName); err != nil {
-				return targetError(target, postName, fmt.Errorf("write publication status: %w", err))
-			}
-		default:
-			return targetError(target, postName, fmt.Errorf("unsupported xpost response status %q", response.Status))
+		if published {
+			continue
+		}
+
+		if err := prepareReply(&record, index, parent, &root); err != nil {
+			return targetError(target, postName, err)
+		}
+
+		if err := p.startPublication(thought, target, postName, publication, &record); err != nil {
+			return targetError(target, postName, err)
+		}
+
+		current, err := p.publishPost(ctx, thought, documents[index], target, postName, record, publication, output)
+		if err != nil {
+			return err
+		}
+
+		parent = current
+		if root == nil {
+			root = current
 		}
 	}
+
+	return nil
+}
+
+func advancePublishedRecord(record metadata.Record, parent, root **xpost.Reference) (bool, error) {
+	switch record.Status {
+	case metadata.StatePublished:
+		current := &xpost.Reference{ID: record.RemoteID, CID: record.RemoteCID}
+		if strings.TrimSpace(current.ID) == "" {
+			return false, errors.New("published metadata has no remote id")
+		}
+
+		*parent = current
+
+		if *root == nil {
+			storedRoot := record.RootReply()
+			if storedRoot != nil {
+				*root = &xpost.Reference{ID: storedRoot.ID, CID: storedRoot.CID}
+			} else {
+				*root = current
+			}
+		}
+
+		return true, nil
+	case metadata.StatePublishing:
+		return false, errors.New("publication is still publishing; inspect the destination and edit metadata")
+	case metadata.StateRejected:
+		return false, errors.New("publication was rejected; fix the post and reset metadata to pending")
+	case metadata.StatePending, metadata.StateFailed:
+		return false, nil
+	default:
+		return false, fmt.Errorf("unsupported publication state %q", record.Status)
+	}
+}
+
+func prepareReply(record *metadata.Record, index int, parent *xpost.Reference, root **xpost.Reference) error {
+	if index > 0 && parent == nil {
+		return errors.New("parent post is not published")
+	}
+
+	if parent == nil {
+		return nil
+	}
+
+	record.ParentID = parent.ID
+
+	record.ParentCID = parent.CID
+	if *root == nil {
+		*root = parent
+	}
+
+	record.RootID = (*root).ID
+	record.RootCID = (*root).CID
+
+	return nil
+}
+
+func (p Publisher) startPublication(
+	thought archive.Thought,
+	target, postName string,
+	publication *metadata.Document,
+	record *metadata.Record,
+) error {
+	if err := record.MarkPublishing(p.now()); err != nil {
+		return err
+	}
+
+	if err := savePublicationState(thought, target, postName, publication, *record, "save publishing state"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (p Publisher) publishPost(
+	ctx context.Context,
+	thought archive.Thought,
+	document markdown.Document,
+	target, postName string,
+	record metadata.Record,
+	publication *metadata.Document,
+	output io.Writer,
+) (*xpost.Reference, error) {
+	request := buildRequest(document, target, record)
+
+	response, err := p.client.Publish(ctx, request)
+	if err != nil {
+		return nil, p.failTransport(thought, target, postName, publication, record, err)
+	}
+
+	switch response.Status {
+	case "failed":
+		return nil, p.failResponse(thought, target, postName, publication, record, response, false, "transport", "save failed state")
+	case "rejected":
+		return nil, p.failResponse(thought, target, postName, publication, record, response, true, "validation", "save rejected state")
+	case "published":
+		return p.completePublication(thought, target, postName, publication, record, response, output)
+	default:
+		return nil, targetError(target, postName, fmt.Errorf("unsupported xpost response status %q", response.Status))
+	}
+}
+
+func (p Publisher) failTransport(
+	thought archive.Thought,
+	target, postName string,
+	publication *metadata.Document,
+	record metadata.Record,
+	transportErr error,
+) error {
+	if markErr := record.MarkFailed("transport", transportErr.Error()); markErr != nil {
+		return targetError(target, postName, markErr)
+	}
+
+	if saveErr := savePublicationState(thought, target, postName, publication, record, "save failed state"); saveErr != nil {
+		return targetError(target, postName, saveErr)
+	}
+
+	return targetError(target, postName, transportErr)
+}
+
+func (p Publisher) failResponse(
+	thought archive.Thought,
+	target, postName string,
+	publication *metadata.Document,
+	record metadata.Record,
+	response xpost.Response,
+	rejected bool,
+	defaultKind, saveContext string,
+) error {
+	errorKind, errorMessage := responseError(response, defaultKind)
+
+	if rejected {
+		if markErr := record.MarkRejected(errorKind, errorMessage); markErr != nil {
+			return targetError(target, postName, markErr)
+		}
+	} else if markErr := record.MarkFailed(errorKind, errorMessage); markErr != nil {
+		return targetError(target, postName, markErr)
+	}
+
+	if saveErr := savePublicationState(thought, target, postName, publication, record, saveContext); saveErr != nil {
+		return targetError(target, postName, saveErr)
+	}
+
+	return targetError(target, postName, errors.New(errorMessage))
+}
+
+func (p Publisher) completePublication(
+	thought archive.Thought,
+	target, postName string,
+	publication *metadata.Document,
+	record metadata.Record,
+	response xpost.Response,
+	output io.Writer,
+) (*xpost.Reference, error) {
+	result := metadata.Reference{ID: response.RemoteID, CID: response.RemoteCID}
+	if err := record.MarkPublished(p.now(), result, response.URL); err != nil {
+		return nil, targetError(target, postName, err)
+	}
+
+	if saveErr := savePublicationState(thought, target, postName, publication, record, "save published state"); saveErr != nil {
+		return nil, targetError(target, postName, saveErr)
+	}
+
+	if _, err := fmt.Fprintf(output, "%s %s: published\n", target, postName); err != nil {
+		return nil, targetError(target, postName, fmt.Errorf("write publication status: %w", err))
+	}
+
+	return &xpost.Reference{ID: response.RemoteID, CID: response.RemoteCID}, nil
+}
+
+func buildRequest(document markdown.Document, target string, record metadata.Record) xpost.Request {
+	request := xpost.Request{
+		Target:      target,
+		Text:        document.Text,
+		Attachments: make([]xpost.Attachment, 0, len(document.Attachments)),
+	}
+	for _, attachment := range document.Attachments {
+		request.Attachments = append(request.Attachments, xpost.Attachment{
+			Path: attachment.Path,
+			Alt:  attachment.Alt,
+		})
+	}
+
+	if record.ParentID != "" {
+		request.ReplyTo = &xpost.Reference{ID: record.ParentID, CID: record.ParentCID}
+		request.RootReplyTo = &xpost.Reference{ID: record.RootID, CID: record.RootCID}
+	}
+
+	return request
+}
+
+func savePublicationState(
+	thought archive.Thought,
+	target, postName string,
+	publication *metadata.Document,
+	record metadata.Record,
+	saveContext string,
+) error {
+	if err := publication.Set(postName, target, record); err != nil {
+		return err
+	}
+
+	if err := metadata.Save(thought.MetadataPath(), *publication); err != nil {
+		return fmt.Errorf("%s: %w", saveContext, err)
+	}
+
 	return nil
 }
 
@@ -249,19 +376,24 @@ func normalizeTargets(values []string) ([]string, error) {
 	if len(values) == 0 {
 		return metadata.Targets(), nil
 	}
+
 	seen := make(map[string]bool, len(values))
 	for _, value := range values {
 		target := strings.ToLower(strings.TrimSpace(value))
 		if !validTarget(target) {
 			return nil, fmt.Errorf("unsupported target %q", value)
 		}
+
 		seen[target] = true
 	}
+
 	targets := make([]string, 0, len(seen))
 	for target := range seen {
 		targets = append(targets, target)
 	}
+
 	sort.Strings(targets)
+
 	return targets, nil
 }
 
@@ -274,6 +406,7 @@ func postNames(posts []archive.Post) []string {
 	for _, post := range posts {
 		names = append(names, fmt.Sprintf("%02d", post.Number))
 	}
+
 	return names
 }
 
@@ -286,9 +419,11 @@ func responseError(response xpost.Response, defaultKind string) (string, string)
 	if kind == "" {
 		kind = defaultKind
 	}
+
 	message := strings.TrimSpace(response.Error)
 	if message == "" {
 		message = fmt.Sprintf("xpost bridge returned %s without an error", response.Status)
 	}
+
 	return kind, message
 }

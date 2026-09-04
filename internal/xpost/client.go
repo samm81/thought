@@ -64,9 +64,11 @@ func New(command string, timeout time.Duration) Client {
 	if command == "" {
 		command = "xpost"
 	}
+
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
+
 	return Client{command: command, timeout: timeout}
 }
 
@@ -93,16 +95,24 @@ func (c Client) Publish(ctx context.Context, request Request) (Response, error) 
 
 	commandContext, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	process := exec.CommandContext(commandContext, c.command, "bridge")
+
+	// The bridge executable is an explicit user configuration.
+	process := exec.CommandContext(commandContext, c.command, "bridge") //nolint:gosec // user-configured bridge command
 	process.Stdin = bytes.NewReader(payload)
-	var standardOutput bytes.Buffer
-	var standardError bytes.Buffer
+
+	var (
+		standardOutput bytes.Buffer
+		standardError  bytes.Buffer
+	)
+
 	process.Stdout = &standardOutput
+
 	process.Stderr = &standardError
 	if err := process.Run(); err != nil {
 		if commandContext.Err() != nil {
 			return Response{}, fmt.Errorf("run xpost bridge: %w", commandContext.Err())
 		}
+
 		return Response{}, ProcessError{
 			Command: c.command,
 			Stderr:  strings.TrimSpace(standardError.String()),
@@ -114,6 +124,7 @@ func (c Client) Publish(ctx context.Context, request Request) (Response, error) 
 	if err != nil {
 		return Response{}, err
 	}
+
 	switch response.Status {
 	case "published":
 		if strings.TrimSpace(response.RemoteID) == "" {
@@ -126,6 +137,7 @@ func (c Client) Publish(ctx context.Context, request Request) (Response, error) 
 	default:
 		return Response{}, fmt.Errorf("xpost bridge returned unsupported status %q", response.Status)
 	}
+
 	return response, nil
 }
 
@@ -140,6 +152,7 @@ func (e ProcessError) Error() string {
 	if e.Stderr == "" {
 		return fmt.Sprintf("run %s: %v", e.Command, e.Err)
 	}
+
 	return fmt.Sprintf("run %s: %v: %s", e.Command, e.Err, e.Stderr)
 }
 
@@ -151,16 +164,20 @@ func (e ProcessError) Unwrap() error {
 func decodeResponse(data []byte) (Response, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
+
 	var response Response
 	if err := decoder.Decode(&response); err != nil {
 		return Response{}, fmt.Errorf("decode xpost response: %w", err)
 	}
+
 	var extra json.RawMessage
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		if err == nil {
 			return Response{}, errors.New("decode xpost response: multiple JSON values")
 		}
+
 		return Response{}, fmt.Errorf("decode xpost response: %w", err)
 	}
+
 	return response, nil
 }

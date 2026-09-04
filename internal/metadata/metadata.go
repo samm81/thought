@@ -73,23 +73,28 @@ func New(posts []string) Document {
 		Posts:   make(map[string]map[string]Record),
 	}
 	document.Ensure(posts, Targets())
+
 	return document
 }
 
 // Load reads metadata or returns pending metadata when the file is absent.
 func Load(path string, posts []string) (Document, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // callers pass paths inside the local thought archive
 	if errors.Is(err, os.ErrNotExist) {
 		return New(posts), nil
 	}
+
 	if err != nil {
 		return Document{}, fmt.Errorf("read metadata: %w", err)
 	}
+
 	document, err := parse(data)
 	if err != nil {
 		return Document{}, fmt.Errorf("parse metadata: %w", err)
 	}
+
 	document.Ensure(posts, Targets())
+
 	return document, nil
 }
 
@@ -98,44 +103,55 @@ func Save(path string, document Document) error {
 	if document.Version == 0 {
 		document.Version = currentVersion
 	}
+
 	if document.Version != currentVersion {
 		return fmt.Errorf("unsupported metadata version %d", document.Version)
 	}
+
 	if err := validateDocument(document); err != nil {
 		return err
 	}
+
 	data, err := marshal(document)
 	if err != nil {
 		return fmt.Errorf("encode metadata: %w", err)
 	}
 
 	directory := filepath.Dir(path)
+
 	file, err := os.CreateTemp(directory, ".meta.toml-*")
 	if err != nil {
 		return fmt.Errorf("create metadata temporary file: %w", err)
 	}
+
 	temporaryPath := file.Name()
 	defer func() {
 		_ = os.Remove(temporaryPath)
 	}()
-	if err := file.Chmod(0o644); err != nil {
+
+	if err := file.Chmod(0o600); err != nil {
 		_ = file.Close()
 		return fmt.Errorf("set metadata permissions: %w", err)
 	}
+
 	if _, err := file.Write(data); err != nil {
 		_ = file.Close()
 		return fmt.Errorf("write metadata: %w", err)
 	}
+
 	if err := file.Sync(); err != nil {
 		_ = file.Close()
 		return fmt.Errorf("sync metadata: %w", err)
 	}
+
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("close metadata: %w", err)
 	}
+
 	if err := os.Rename(temporaryPath, path); err != nil {
 		return fmt.Errorf("replace metadata: %w", err)
 	}
+
 	return nil
 }
 
@@ -144,13 +160,16 @@ func (d *Document) Ensure(posts, targets []string) {
 	if d.Version == 0 {
 		d.Version = currentVersion
 	}
+
 	if d.Posts == nil {
 		d.Posts = make(map[string]map[string]Record)
 	}
+
 	for _, post := range posts {
 		if d.Posts[post] == nil {
 			d.Posts[post] = make(map[string]Record)
 		}
+
 		for _, target := range targets {
 			if _, ok := d.Posts[post][target]; ok {
 				if d.Posts[post][target].Status == "" {
@@ -158,8 +177,10 @@ func (d *Document) Ensure(posts, targets []string) {
 					record.Status = StatePending
 					d.Posts[post][target] = record
 				}
+
 				continue
 			}
+
 			d.Posts[post][target] = Record{Status: StatePending}
 		}
 	}
@@ -172,9 +193,11 @@ func (d Document) Get(post, target string) Record {
 			if record.Status == "" {
 				record.Status = StatePending
 			}
+
 			return record
 		}
 	}
+
 	return Record{Status: StatePending}
 }
 
@@ -183,22 +206,29 @@ func (d *Document) Set(post, target string, record Record) error {
 	if strings.TrimSpace(post) == "" {
 		return errors.New("metadata post name is required")
 	}
+
 	if !validTarget(target) {
 		return fmt.Errorf("unsupported metadata target %q", target)
 	}
+
 	if record.Status == "" {
 		record.Status = StatePending
 	}
+
 	if !validState(record.Status) {
 		return fmt.Errorf("unsupported metadata state %q", record.Status)
 	}
+
 	if d.Posts == nil {
 		d.Posts = make(map[string]map[string]Record)
 	}
+
 	if d.Posts[post] == nil {
 		d.Posts[post] = make(map[string]Record)
 	}
+
 	d.Posts[post][target] = record
+
 	return nil
 }
 
@@ -207,13 +237,16 @@ func (r *Record) MarkPublishing(at time.Time) error {
 	if r.Status == "" {
 		r.Status = StatePending
 	}
+
 	if r.Status != StatePending && r.Status != StateFailed {
 		return fmt.Errorf("cannot start publication from %s", r.Status)
 	}
+
 	r.Status = StatePublishing
 	r.AttemptedAt = timeValue(at)
 	r.ErrorKind = ""
 	r.Error = ""
+
 	return nil
 }
 
@@ -222,9 +255,11 @@ func (r *Record) MarkPublished(at time.Time, result Reference, url string) error
 	if r.Status != StatePublishing {
 		return fmt.Errorf("cannot mark %s as published", r.Status)
 	}
+
 	if strings.TrimSpace(result.ID) == "" {
 		return errors.New("published record requires a remote id")
 	}
+
 	r.Status = StatePublished
 	r.PublishedAt = timeValue(at)
 	r.RemoteID = result.ID
@@ -232,6 +267,7 @@ func (r *Record) MarkPublished(at time.Time, result Reference, url string) error
 	r.URL = url
 	r.ErrorKind = ""
 	r.Error = ""
+
 	return nil
 }
 
@@ -240,9 +276,11 @@ func (r *Record) MarkFailed(kind, message string) error {
 	if r.Status != StatePublishing {
 		return fmt.Errorf("cannot mark %s as failed", r.Status)
 	}
+
 	r.Status = StateFailed
 	r.ErrorKind = strings.TrimSpace(kind)
 	r.Error = strings.TrimSpace(message)
+
 	return nil
 }
 
@@ -251,9 +289,11 @@ func (r *Record) MarkRejected(kind, message string) error {
 	if r.Status != StatePublishing {
 		return fmt.Errorf("cannot mark %s as rejected", r.Status)
 	}
+
 	r.Status = StateRejected
 	r.ErrorKind = strings.TrimSpace(kind)
 	r.Error = strings.TrimSpace(message)
+
 	return nil
 }
 
@@ -262,6 +302,7 @@ func (r Record) Reply() *Reference {
 	if r.ParentID == "" {
 		return nil
 	}
+
 	return &Reference{ID: r.ParentID, CID: r.ParentCID}
 }
 
@@ -270,6 +311,7 @@ func (r Record) RootReply() *Reference {
 	if r.RootID == "" {
 		return nil
 	}
+
 	return &Reference{ID: r.RootID, CID: r.RootCID}
 }
 
@@ -277,30 +319,29 @@ func parse(data []byte) (Document, error) {
 	document := Document{Posts: make(map[string]map[string]Record)}
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	scanner.Buffer(make([]byte, 1024), 1024*1024)
+
 	currentPost := ""
 	currentTarget := ""
 	versionFound := false
+
 	lineNumber := 0
 	for scanner.Scan() {
 		lineNumber++
+
 		line := strings.TrimSpace(stripComment(scanner.Text()))
 		if line == "" {
 			continue
 		}
+
 		if strings.HasPrefix(line, "[") {
-			post, target, err := parseTable(line)
+			post, target, err := parseTableLine(&document, line)
 			if err != nil {
 				return Document{}, fmt.Errorf("line %d: %w", lineNumber, err)
 			}
+
 			currentPost = post
 			currentTarget = target
-			if document.Posts[currentPost] == nil {
-				document.Posts[currentPost] = make(map[string]Record)
-			}
-			if _, exists := document.Posts[currentPost][currentTarget]; exists {
-				return Document{}, fmt.Errorf("line %d: duplicate metadata table", lineNumber)
-			}
-			document.Posts[currentPost][currentTarget] = Record{Status: StatePending}
+
 			continue
 		}
 
@@ -308,18 +349,19 @@ func parse(data []byte) (Document, error) {
 		if !ok {
 			return Document{}, fmt.Errorf("line %d: expected key and value", lineNumber)
 		}
+
 		key = strings.TrimSpace(key)
 		value = strings.TrimSpace(value)
+
 		if currentPost == "" {
-			if key != "version" {
-				return Document{}, fmt.Errorf("line %d: unexpected top-level key %q", lineNumber, key)
-			}
-			version, err := strconv.Atoi(value)
+			version, err := parseVersionLine(key, value, lineNumber)
 			if err != nil {
-				return Document{}, fmt.Errorf("line %d: invalid metadata version", lineNumber)
+				return Document{}, err
 			}
+
 			document.Version = version
 			versionFound = true
+
 			continue
 		}
 
@@ -327,21 +369,59 @@ func parse(data []byte) (Document, error) {
 		if err := parseRecordField(&record, key, value); err != nil {
 			return Document{}, fmt.Errorf("line %d: %w", lineNumber, err)
 		}
+
 		document.Posts[currentPost][currentTarget] = record
 	}
+
 	if err := scanner.Err(); err != nil {
 		return Document{}, fmt.Errorf("scan metadata: %w", err)
 	}
+
 	if !versionFound {
 		return Document{}, errors.New("metadata version is required")
 	}
+
 	if document.Version != currentVersion {
 		return Document{}, fmt.Errorf("unsupported metadata version %d", document.Version)
 	}
+
 	if err := validateDocument(document); err != nil {
 		return Document{}, err
 	}
+
 	return document, nil
+}
+
+func parseTableLine(document *Document, line string) (string, string, error) {
+	post, target, err := parseTable(line)
+	if err != nil {
+		return "", "", err
+	}
+
+	if document.Posts[post] == nil {
+		document.Posts[post] = make(map[string]Record)
+	}
+
+	if _, exists := document.Posts[post][target]; exists {
+		return "", "", errors.New("duplicate metadata table")
+	}
+
+	document.Posts[post][target] = Record{Status: StatePending}
+
+	return post, target, nil
+}
+
+func parseVersionLine(key, value string, lineNumber int) (int, error) {
+	if key != "version" {
+		return 0, fmt.Errorf("line %d: unexpected top-level key %q", lineNumber, key)
+	}
+
+	version, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("line %d: invalid metadata version", lineNumber)
+	}
+
+	return version, nil
 }
 
 func marshal(document Document) ([]byte, error) {
@@ -349,23 +429,29 @@ func marshal(document Document) ([]byte, error) {
 	for post := range document.Posts {
 		posts = append(posts, post)
 	}
+
 	sort.Strings(posts)
 
 	var output strings.Builder
 	output.WriteString("version = 1\n")
+
 	for _, post := range posts {
 		targets := document.Posts[post]
+
 		targetNames := make([]string, 0, len(targets))
 		for target := range targets {
 			targetNames = append(targetNames, target)
 		}
+
 		sort.Strings(targetNames)
+
 		for _, target := range targetNames {
 			record := targets[target]
 			if record.Status == "" {
 				record.Status = StatePending
 			}
-			output.WriteString(fmt.Sprintf("\n[posts.%q.targets.%s]\n", post, target))
+
+			fmt.Fprintf(&output, "\n[posts.%q.targets.%s]\n", post, target)
 			writeStringField(&output, "status", string(record.Status), true)
 			writeTimeField(&output, "attempted_at", record.AttemptedAt)
 			writeTimeField(&output, "published_at", record.PublishedAt)
@@ -380,6 +466,7 @@ func marshal(document Document) ([]byte, error) {
 			writeStringField(&output, "error", record.Error, false)
 		}
 	}
+
 	return []byte(output.String()), nil
 }
 
@@ -388,43 +475,33 @@ func parseTable(line string) (string, string, error) {
 	if !strings.HasPrefix(line, prefix) || !strings.HasSuffix(line, "]") {
 		return "", "", errors.New("invalid metadata table")
 	}
+
 	content := strings.TrimSuffix(strings.TrimPrefix(line, prefix), "]")
 	marker := `".targets.`
+
 	index := strings.Index(content, marker)
 	if index < 1 {
 		return "", "", errors.New("invalid metadata table")
 	}
+
 	post := content[:index]
+
 	target := content[index+len(marker):]
 	if strings.ContainsAny(post, `"\`) || !validTarget(target) {
 		return "", "", errors.New("invalid metadata table")
 	}
+
 	return post, target, nil
 }
 
 func parseRecordField(record *Record, key, value string) error {
 	switch key {
 	case "status":
-		parsed, err := parseString(value)
-		if err != nil {
-			return fmt.Errorf("invalid status: %w", err)
-		}
-		record.Status = State(parsed)
-		if !validState(record.Status) {
-			return fmt.Errorf("unsupported metadata state %q", parsed)
-		}
+		return parseStatusField(record, value)
 	case "attempted_at":
-		parsed, err := parseTime(value)
-		if err != nil {
-			return fmt.Errorf("invalid attempted_at: %w", err)
-		}
-		record.AttemptedAt = parsed
+		return parseTimeField(&record.AttemptedAt, "attempted_at", value)
 	case "published_at":
-		parsed, err := parseTime(value)
-		if err != nil {
-			return fmt.Errorf("invalid published_at: %w", err)
-		}
-		record.PublishedAt = parsed
+		return parseTimeField(&record.PublishedAt, "published_at", value)
 	case "remote_id":
 		return setString(&record.RemoteID, value)
 	case "remote_cid":
@@ -446,6 +523,30 @@ func parseRecordField(record *Record, key, value string) error {
 	default:
 		return fmt.Errorf("unsupported metadata field %q", key)
 	}
+}
+
+func parseStatusField(record *Record, value string) error {
+	parsed, err := parseString(value)
+	if err != nil {
+		return fmt.Errorf("invalid status: %w", err)
+	}
+
+	record.Status = State(parsed)
+	if !validState(record.Status) {
+		return fmt.Errorf("unsupported metadata state %q", parsed)
+	}
+
+	return nil
+}
+
+func parseTimeField(destination **time.Time, key, value string) error {
+	parsed, err := parseTime(value)
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", key, err)
+	}
+
+	*destination = parsed
+
 	return nil
 }
 
@@ -454,7 +555,9 @@ func setString(destination *string, value string) error {
 	if err != nil {
 		return err
 	}
+
 	*destination = parsed
+
 	return nil
 }
 
@@ -462,10 +565,12 @@ func parseString(value string) (string, error) {
 	if len(value) < 2 || value[0] != '"' || value[len(value)-1] != '"' {
 		return "", errors.New("expected a quoted string")
 	}
+
 	parsed, err := strconv.Unquote(value)
 	if err != nil {
 		return "", fmt.Errorf("invalid quoted string: %w", err)
 	}
+
 	return parsed, nil
 }
 
@@ -474,36 +579,44 @@ func parseTime(value string) (*time.Time, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	if parsed == "" {
 		return nil, nil
 	}
+
 	at, err := time.Parse(time.RFC3339Nano, parsed)
 	if err != nil {
 		return nil, err
 	}
+
 	return timeValue(at), nil
 }
 
 func stripComment(line string) string {
 	inString := false
+
 	escaped := false
 	for index, character := range line {
 		if escaped {
 			escaped = false
 			continue
 		}
+
 		if character == '\\' && inString {
 			escaped = true
 			continue
 		}
+
 		if character == '"' {
 			inString = !inString
 			continue
 		}
+
 		if character == '#' && !inString {
 			return line[:index]
 		}
 	}
+
 	return line
 }
 
@@ -511,6 +624,7 @@ func writeStringField(output *strings.Builder, key, value string, required bool)
 	if !required && value == "" {
 		return
 	}
+
 	fmt.Fprintf(output, "%s = %s\n", key, strconv.Quote(value))
 }
 
@@ -518,6 +632,7 @@ func writeTimeField(output *strings.Builder, key string, value *time.Time) {
 	if value == nil || value.IsZero() {
 		return
 	}
+
 	writeStringField(output, key, value.UTC().Format(time.RFC3339Nano), true)
 }
 
@@ -525,22 +640,27 @@ func validateDocument(document Document) error {
 	if document.Version != currentVersion {
 		return fmt.Errorf("unsupported metadata version %d", document.Version)
 	}
+
 	for post, targets := range document.Posts {
 		if strings.TrimSpace(post) == "" {
 			return errors.New("metadata post name is required")
 		}
+
 		for target, record := range targets {
 			if !validTarget(target) {
 				return fmt.Errorf("unsupported metadata target %q", target)
 			}
+
 			if record.Status == "" {
 				record.Status = StatePending
 			}
+
 			if !validState(record.Status) {
 				return fmt.Errorf("unsupported metadata state %q", record.Status)
 			}
 		}
 	}
+
 	return nil
 }
 
