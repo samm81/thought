@@ -35,6 +35,31 @@ func New(client Client) Publisher {
 	}
 }
 
+// NeedsPublication reports whether any selected post still needs publication.
+func NeedsPublication(thought archive.Thought, targetNames []string) (bool, error) {
+	posts, err := thought.Posts()
+	if err != nil {
+		return false, fmt.Errorf("discover posts: %w", err)
+	}
+	targets, err := normalizeTargets(targetNames)
+	if err != nil {
+		return false, err
+	}
+	publication, err := metadata.Load(thought.MetadataPath(), postNames(posts))
+	if err != nil {
+		return false, fmt.Errorf("load publication metadata: %w", err)
+	}
+	for _, post := range posts {
+		postName := fmt.Sprintf("%02d", post.Number)
+		for _, target := range targets {
+			if publication.Get(postName, target).Status != metadata.StatePublished {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 // Publish publishes a thought to the selected targets.
 func (p Publisher) Publish(ctx context.Context, thought archive.Thought, targetNames []string, output io.Writer) error {
 	posts, err := thought.Posts()

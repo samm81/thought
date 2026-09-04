@@ -117,6 +117,51 @@ func TestThoughtAcceptsFullDirectoryPath(t *testing.T) {
 	}
 }
 
+func TestMostRecentThought(t *testing.T) {
+	t.Parallel()
+
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	older, err := root.Create("older", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer, err := root.Create("newer", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldAt := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	newAt := oldAt.Add(time.Minute)
+	if err := os.Chtimes(older.Path(), oldAt, oldAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(newer.Path(), newAt, newAt); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := root.MostRecentThought()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name() != newer.Name() {
+		t.Fatalf("MostRecentThought() = %q, want %q", got.Name(), newer.Name())
+	}
+}
+
+func TestMostRecentThoughtRejectsEmptyArchive(t *testing.T) {
+	t.Parallel()
+
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := root.MostRecentThought(); err == nil {
+		t.Fatal("MostRecentThought() error = nil, want no thoughts error")
+	}
+}
+
 func TestThoughtRejectsDirectoryOutsideArchive(t *testing.T) {
 	t.Parallel()
 

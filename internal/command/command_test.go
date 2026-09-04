@@ -71,7 +71,7 @@ func TestRun(t *testing.T) {
 
 func TestRunRejectsInvalidPublishArguments(t *testing.T) {
 	var output bytes.Buffer
-	err := Run(context.Background(), []string{"publish"}, &output)
+	err := Run(context.Background(), []string{"publish", "one", "two"}, &output)
 	if !errors.Is(err, ErrUsage) {
 		t.Fatalf("Run() error = %v, want usage error", err)
 	}
@@ -189,6 +189,124 @@ func TestRunPublishTargetSelection(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "x 01: published") {
 		t.Fatalf("output = %q", output.String())
+	}
+}
+
+func TestRunPublishSelectsMostRecentThoughtAfterConfirmation(t *testing.T) {
+	archiveRoot := t.TempDir()
+	root, err := archive.New(archiveRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	older, err := root.Create("older", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer, err := root.Create("newer", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(older.Path(), "01.md"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(newer.Path(), "01.md"), []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldAt := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	newAt := oldAt.Add(time.Minute)
+	if err := os.Chtimes(older.Path(), oldAt, oldAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(newer.Path(), newAt, newAt); err != nil {
+		t.Fatal(err)
+	}
+	bridgePath := filepath.Join(t.TempDir(), "xpost")
+	if err := os.WriteFile(bridgePath, []byte("#!/bin/sh\nprintf '%s\\n' '{\"status\":\"published\",\"remote_id\":\"post-1\"}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("THOUGHT_HOME", archiveRoot)
+	t.Setenv("THOUGHT_XPOST", bridgePath)
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{"publish"}, strings.NewReader("y\n"), &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `publish "newer" to bluesky and x? [y/N]`) {
+		t.Fatalf("output = %q, want confirmation for newer thought", output.String())
+	}
+	publication, err := metadata.Load(newer.MetadataPath(), []string{"01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range metadata.Targets() {
+		if got := publication.Get("01", target).Status; got != metadata.StatePublished {
+			t.Fatalf("%s state = %q, want published", target, got)
+		}
+	}
+	if _, err := os.Stat(older.MetadataPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("older metadata stat error = %v, want absent metadata", err)
+	}
+}
+
+func TestRunPublishDeclinesMostRecentThought(t *testing.T) {
+	archiveRoot := t.TempDir()
+	root, err := archive.New(archiveRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	thought, err := root.Create("demo", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("THOUGHT_HOME", archiveRoot)
+
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{"publish"}, strings.NewReader("n\n"), &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `publish "demo" to bluesky and x? [y/N]`) || !strings.Contains(output.String(), "publication cancelled") {
+		t.Fatalf("output = %q, want declined confirmation", output.String())
+	}
+	if _, err := os.Stat(thought.MetadataPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("metadata stat error = %v, want absent metadata", err)
+	}
+}
+
+func TestRunPublishRejectsAlreadyPublishedMostRecentThought(t *testing.T) {
+	archiveRoot := t.TempDir()
+	root, err := archive.New(archiveRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	thought, err := root.Create("demo", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	publication := metadata.New([]string{"01"})
+	for _, target := range metadata.Targets() {
+		record := publication.Get("01", target)
+		if err := record.MarkPublishing(time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if err := record.MarkPublished(time.Now(), metadata.Reference{ID: target + "-1"}, ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := publication.Set("01", target, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := metadata.Save(thought.MetadataPath(), publication); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("THOUGHT_HOME", archiveRoot)
+
+	var output bytes.Buffer
+	err = run(context.Background(), []string{"publish"}, strings.NewReader("y\n"), &output)
+	if err == nil || !strings.Contains(err.Error(), "already published") {
+		t.Fatalf("run() error = %v, want already published error", err)
+	}
+	if strings.Contains(output.String(), "[y/N]") {
+		t.Fatalf("output = %q, want no confirmation for published thought", output.String())
 	}
 }
 

@@ -119,8 +119,10 @@ The product provides these explicit commands:
 
 - `new [name]` creates a thought and opens its initial post for editing;
 - `edit <name-or-directory>` opens all numbered Markdown files for that thought together;
-- `publish <name-or-directory> [--target bluesky|x]` publishes to both destinations by
-  default, or only to the selected destination;
+- `publish [name-or-directory] [--target bluesky|x]` publishes to both destinations by
+  default, or only to the selected destination. When the thought is omitted,
+  `thought` selects the most recent thought and asks for confirmation before
+  publishing it;
 - `status <name-or-directory>` shows local publication state and remote references.
 
 The `edit`, `publish`, and `status` commands accept either the thought's
@@ -128,6 +130,11 @@ directory name under the archive root or its full directory path. Full paths
 must identify a direct child of the configured archive root. This supports
 shell tab completion without allowing a command to select a directory outside
 the local archive.
+
+When `publish` is called without a thought name or directory, it selects the
+most recent thought. It does not ask to publish a thought whose selected
+destinations are already published; the user must provide an explicit thought
+to republish or inspect.
 
 When `new` is called without a name, the thought receives a timestamped
 directory name. `edit` opens the numbered files in numerical order in one

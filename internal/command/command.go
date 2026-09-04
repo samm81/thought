@@ -2,10 +2,12 @@
 package command
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -27,7 +29,7 @@ const usageText = `usage: thought <command> [arguments]
 commands:
   new [name]                      create and edit a thought
   edit <name-or-directory>        edit a thought
-  publish <name-or-directory> [--target ...]   publish a thought
+  publish [name-or-directory] [--target ...]   publish a thought
   status <name-or-directory>      show local publication state
 
 options:
@@ -36,6 +38,10 @@ options:
 
 // Run parses arguments and executes one command.
 func Run(ctx context.Context, arguments []string, output io.Writer) error {
+	return run(ctx, arguments, os.Stdin, output)
+}
+
+func run(ctx context.Context, arguments []string, input io.Reader, output io.Writer) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -49,7 +55,7 @@ func Run(ctx context.Context, arguments []string, output io.Writer) error {
 	case "edit":
 		return runEdit(ctx, arguments[1:])
 	case "publish":
-		return runPublish(ctx, arguments[1:], output)
+		return runPublish(ctx, arguments[1:], input, output)
 	case "status":
 		return runStatus(arguments[1:], output)
 	default:
@@ -128,7 +134,10 @@ func runEdit(ctx context.Context, arguments []string) error {
 	return editor.Open(ctx, editor.FromEnvironment(), paths)
 }
 
-func runPublish(ctx context.Context, arguments []string, output io.Writer) error {
+func runPublish(ctx context.Context, arguments []string, input io.Reader, output io.Writer) error {
+	if err := requireOutput(output); err != nil {
+		return err
+	}
 	name, targets, err := parsePublishArguments(arguments)
 	if err != nil {
 		return err
@@ -137,9 +146,32 @@ func runPublish(ctx context.Context, arguments []string, output io.Writer) error
 	if err != nil {
 		return err
 	}
-	thought, err := root.Thought(name)
-	if err != nil {
-		return err
+
+	var thought archive.Thought
+	if name == "" {
+		thought, err = root.MostRecentThought()
+		if err != nil {
+			return fmt.Errorf("find most recent thought: %w", err)
+		}
+		needsPublication, err := publish.NeedsPublication(thought, targets)
+		if err != nil {
+			return fmt.Errorf("inspect most recent thought: %w", err)
+		}
+		if !needsPublication {
+			return fmt.Errorf("most recent thought %q is already published; specify a thought to publish", thought.Name())
+		}
+		confirmed, err := confirmPublish(input, output, thought, targets)
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			return nil
+		}
+	} else {
+		thought, err = root.Thought(name)
+		if err != nil {
+			return err
+		}
 	}
 	return publish.New(xpost.FromEnvironment()).Publish(ctx, thought, targets, output)
 }
@@ -231,12 +263,9 @@ func statusAction(state metadata.State) string {
 }
 
 func parsePublishArguments(arguments []string) (string, []string, error) {
-	if len(arguments) == 0 || strings.TrimSpace(arguments[0]) == "" || strings.HasPrefix(arguments[0], "-") {
-		return "", nil, usageError("publish requires one thought name or directory")
-	}
-	name := arguments[0]
+	name := ""
 	targets := make([]string, 0)
-	for index := 1; index < len(arguments); index++ {
+	for index := 0; index < len(arguments); index++ {
 		argument := arguments[index]
 		switch {
 		case argument == "--target":
@@ -247,11 +276,44 @@ func parsePublishArguments(arguments []string) (string, []string, error) {
 			targets = append(targets, arguments[index])
 		case strings.HasPrefix(argument, "--target="):
 			targets = append(targets, strings.TrimPrefix(argument, "--target="))
-		default:
+		case strings.HasPrefix(argument, "-"):
 			return "", nil, usageError("unknown publish option %q", argument)
+		case name != "":
+			return "", nil, usageError("publish accepts one thought name or directory")
+		default:
+			name = argument
 		}
 	}
 	return name, targets, nil
+}
+
+func confirmPublish(input io.Reader, output io.Writer, thought archive.Thought, targets []string) (bool, error) {
+	if input == nil {
+		return false, errors.New("input reader is nil")
+	}
+	if _, err := fmt.Fprintf(output, "publish %q to %s? [y/N] ", thought.Name(), publishTargetText(targets)); err != nil {
+		return false, fmt.Errorf("write publication confirmation: %w", err)
+	}
+
+	answer, err := bufio.NewReader(input).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, fmt.Errorf("read publication confirmation: %w", err)
+	}
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	if answer == "y" || answer == "yes" {
+		return true, nil
+	}
+	if _, err := fmt.Fprintln(output, "publication cancelled"); err != nil {
+		return false, fmt.Errorf("write publication cancellation: %w", err)
+	}
+	return false, nil
+}
+
+func publishTargetText(targets []string) string {
+	if len(targets) == 0 {
+		return "bluesky and x"
+	}
+	return strings.Join(targets, ", ")
 }
 
 func postNames(posts []archive.Post) []string {

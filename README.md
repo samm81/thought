@@ -46,7 +46,7 @@ editor for normal use.
 | --- | --- |
 | `thought new [name]` | create a thought and edit its initial post |
 | `thought edit <name-or-directory>` | edit all numbered posts in one editor session |
-| `thought publish <name-or-directory>` | publish to bluesky and x |
+| `thought publish [name-or-directory]` | publish an explicit thought, or confirm the most recent thought when omitted |
 | `thought publish <name-or-directory> --target bluesky` | publish only to bluesky |
 | `thought publish <name-or-directory> --target x` | publish only to x |
 | `thought status <name-or-directory>` | show local states, remote references, and recovery actions |
@@ -87,6 +87,9 @@ again, and transient failures remain retryable. a forcibly terminated process
 may leave a `publishing` entry that must be checked at the destination before
 its TOML state is manually repaired. commands accept either a thought name or
 its full directory path, so shell tab completion works with the archive path.
+when `thought publish` has no thought argument, it selects the most recent
+thought and asks for confirmation before publishing; a fully published latest
+thought must be named explicitly.
 
 ## License
 

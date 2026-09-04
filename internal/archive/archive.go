@@ -89,6 +89,43 @@ func (r Root) Thought(value string) (Thought, error) {
 	}, nil
 }
 
+// MostRecentThought returns the newest direct child thought in the archive.
+func (r Root) MostRecentThought() (Thought, error) {
+	entries, err := os.ReadDir(r.path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Thought{}, errors.New("no thoughts found")
+		}
+		return Thought{}, fmt.Errorf("read archive root: %w", err)
+	}
+
+	var recent Thought
+	var recentAt time.Time
+	found := false
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return Thought{}, fmt.Errorf("inspect thought %q: %w", entry.Name(), err)
+		}
+		if found && (info.ModTime().Before(recentAt) || info.ModTime().Equal(recentAt) && entry.Name() < recent.name) {
+			continue
+		}
+		recent = Thought{
+			name: entry.Name(),
+			path: filepath.Join(r.path, entry.Name()),
+		}
+		recentAt = info.ModTime()
+		found = true
+	}
+	if !found {
+		return Thought{}, errors.New("no thoughts found")
+	}
+	return recent, nil
+}
+
 // Create creates a thought directory and its initial Markdown file.
 func (r Root) Create(name string, at time.Time) (Thought, error) {
 	if err := os.MkdirAll(r.path, 0o755); err != nil {

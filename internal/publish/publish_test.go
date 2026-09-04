@@ -36,6 +36,44 @@ func (c *fakeClient) Publish(_ context.Context, request xpost.Request) (xpost.Re
 	return response, nil
 }
 
+func TestNeedsPublication(t *testing.T) {
+	t.Parallel()
+
+	thought := newThought(t, "01.md", "first")
+	needs, err := NeedsPublication(thought, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !needs {
+		t.Fatal("NeedsPublication() = false, want true for pending thought")
+	}
+
+	publication := metadata.New([]string{"01"})
+	for _, target := range metadata.Targets() {
+		record := publication.Get("01", target)
+		if err := record.MarkPublishing(time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if err := record.MarkPublished(time.Now(), metadata.Reference{ID: target + "-1"}, ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := publication.Set("01", target, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := metadata.Save(thought.MetadataPath(), publication); err != nil {
+		t.Fatal(err)
+	}
+
+	needs, err = NeedsPublication(thought, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if needs {
+		t.Fatal("NeedsPublication() = true, want false for published thought")
+	}
+}
+
 func TestPublishThreadsAndRecordsReferences(t *testing.T) {
 	t.Parallel()
 
