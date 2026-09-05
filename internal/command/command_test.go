@@ -260,7 +260,9 @@ func testBridge(t *testing.T) string {
 	t.Helper()
 
 	bridgePath := filepath.Join(t.TempDir(), "xpost")
-	if err := os.WriteFile(bridgePath, []byte("#!/bin/sh\nprintf '%s\\n' '{\"status\":\"published\",\"remote_id\":\"post-1\"}'\n"), 0o600); err != nil {
+	bridge := "#!/bin/sh\nrequest=\"$(cat)\"\ncase \"$request\" in\n  *'\"operation\":\"validate\"'*) printf '%s\\n' '{\"status\":\"validated\"}' ;;\n  *) printf '%s\\n' '{\"status\":\"published\",\"remote_id\":\"post-1\"}' ;;\nesac\n"
+
+	if err := os.WriteFile(bridgePath, []byte(bridge), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

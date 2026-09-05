@@ -16,6 +16,11 @@ import (
 
 const defaultTimeout = 2 * time.Minute
 
+const (
+	bridgeOperationPublish  = "publish"
+	bridgeOperationValidate = "validate"
+)
+
 // Attachment identifies one image to send to a target.
 type Attachment struct {
 	Path string `json:"path"`
@@ -53,6 +58,15 @@ type Client struct {
 	timeout time.Duration
 }
 
+type bridgeRequest struct {
+	Operation   string       `json:"operation"`
+	Target      string       `json:"target"`
+	Text        string       `json:"text"`
+	Attachments []Attachment `json:"attachments,omitempty"`
+	ReplyTo     *Reference   `json:"reply_to,omitempty"`
+	RootReplyTo *Reference   `json:"root_reply_to,omitempty"`
+}
+
 // FromEnvironment creates a client using THOUGHT_XPOST or xpost on PATH.
 func FromEnvironment() Client {
 	return New(os.Getenv("THOUGHT_XPOST"), defaultTimeout)
@@ -74,15 +88,45 @@ func New(command string, timeout time.Duration) Client {
 
 // Publish sends one request to the xpost bridge.
 func (c Client) Publish(ctx context.Context, request Request) (Response, error) {
-	payload, err := json.Marshal(struct {
-		Operation   string       `json:"operation"`
-		Target      string       `json:"target"`
-		Text        string       `json:"text"`
-		Attachments []Attachment `json:"attachments,omitempty"`
-		ReplyTo     *Reference   `json:"reply_to,omitempty"`
-		RootReplyTo *Reference   `json:"root_reply_to,omitempty"`
-	}{
-		Operation:   "publish",
+	response, err := c.invoke(ctx, bridgeOperationPublish, request)
+	if err != nil {
+		return Response{}, err
+	}
+
+	switch response.Status {
+	case "published":
+		if strings.TrimSpace(response.RemoteID) == "" {
+			return Response{}, errors.New("xpost bridge returned published without remote id")
+		}
+	case "failed", "rejected":
+		response.Error = responseError(response)
+	default:
+		return Response{}, fmt.Errorf("xpost bridge returned unsupported status %q", response.Status)
+	}
+
+	return response, nil
+}
+
+// Validate checks one request through the xpost bridge without publishing it.
+func (c Client) Validate(ctx context.Context, request Request) error {
+	response, err := c.invoke(ctx, bridgeOperationValidate, request)
+	if err != nil {
+		return err
+	}
+
+	switch response.Status {
+	case "validated":
+		return nil
+	case "failed", "rejected":
+		return errors.New(responseError(response))
+	default:
+		return fmt.Errorf("xpost bridge returned unsupported validation status %q", response.Status)
+	}
+}
+
+func (c Client) invoke(ctx context.Context, operation string, request Request) (Response, error) {
+	payload, err := json.Marshal(bridgeRequest{
+		Operation:   operation,
 		Target:      request.Target,
 		Text:        request.Text,
 		Attachments: request.Attachments,
@@ -108,6 +152,7 @@ func (c Client) Publish(ctx context.Context, request Request) (Response, error) 
 	process.Stdout = &standardOutput
 
 	process.Stderr = &standardError
+
 	if err := process.Run(); err != nil {
 		if commandContext.Err() != nil {
 			return Response{}, fmt.Errorf("run xpost bridge: %w", commandContext.Err())
@@ -125,20 +170,15 @@ func (c Client) Publish(ctx context.Context, request Request) (Response, error) 
 		return Response{}, err
 	}
 
-	switch response.Status {
-	case "published":
-		if strings.TrimSpace(response.RemoteID) == "" {
-			return Response{}, errors.New("xpost bridge returned published without remote id")
-		}
-	case "failed", "rejected":
-		if strings.TrimSpace(response.Error) == "" {
-			response.Error = "xpost bridge returned an empty error"
-		}
-	default:
-		return Response{}, fmt.Errorf("xpost bridge returned unsupported status %q", response.Status)
+	return response, nil
+}
+
+func responseError(response Response) string {
+	if message := strings.TrimSpace(response.Error); message != "" {
+		return message
 	}
 
-	return response, nil
+	return fmt.Sprintf("xpost bridge returned %s without an error", response.Status)
 }
 
 // ProcessError describes a failed xpost process invocation.

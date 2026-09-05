@@ -18,6 +18,7 @@ import (
 
 // Client publishes one target-specific post.
 type Client interface {
+	Validate(context.Context, xpost.Request) error
 	Publish(context.Context, xpost.Request) (xpost.Response, error)
 }
 
@@ -95,9 +96,19 @@ func (p Publisher) Publish(ctx context.Context, thought archive.Thought, targetN
 		output = io.Discard
 	}
 
+	preflightErrors, err := p.validatePosts(ctx, posts, documents, targets, &publication)
+	if err != nil {
+		return err
+	}
+
 	var targetErrors []error
 
 	for _, target := range targets {
+		if err := preflightErrors[target]; err != nil {
+			targetErrors = append(targetErrors, err)
+			continue
+		}
+
 		err := p.publishTarget(ctx, thought, posts, documents, target, &publication, output)
 		if err == nil {
 			continue
@@ -115,6 +126,83 @@ func (p Publisher) Publish(ctx context.Context, thought archive.Thought, targetN
 	}
 
 	return nil
+}
+
+func (p Publisher) validatePosts(
+	ctx context.Context,
+	posts []archive.Post,
+	documents []markdown.Document,
+	targets []string,
+	publication *metadata.Document,
+) (map[string]error, error) {
+	validationErrors := make(map[string][]error, len(targets))
+
+	for _, target := range targets {
+		var (
+			parent *xpost.Reference
+			root   *xpost.Reference
+		)
+
+		for index, post := range posts {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+
+			postName := fmt.Sprintf("%02d", post.Number)
+			record := publication.Get(postName, target)
+
+			published, err := advancePublishedRecord(record, &parent, &root)
+			if err != nil {
+				validationErrors[target] = append(validationErrors[target], targetError(target, postName, err))
+				continue
+			}
+
+			if published {
+				continue
+			}
+
+			record = recordForValidation(record, parent, &root)
+
+			request := buildRequest(documents[index], target, record)
+			if err := p.client.Validate(ctx, request); err != nil {
+				if contextErr := ctx.Err(); contextErr != nil {
+					return nil, contextErr
+				}
+
+				validationErrors[target] = append(validationErrors[target], targetError(target, postName, err))
+			}
+		}
+	}
+
+	joinedErrors := make(map[string]error, len(validationErrors))
+	for target, targetValidationErrors := range validationErrors {
+		joinedErrors[target] = errors.Join(targetValidationErrors...)
+	}
+
+	return joinedErrors, nil
+}
+
+func recordForValidation(record metadata.Record, parent *xpost.Reference, root **xpost.Reference) metadata.Record {
+	if parent == nil {
+		record.ParentID = ""
+		record.ParentCID = ""
+		record.RootID = ""
+		record.RootCID = ""
+
+		return record
+	}
+
+	record.ParentID = parent.ID
+	record.ParentCID = parent.CID
+
+	if *root == nil {
+		*root = parent
+	}
+
+	record.RootID = (*root).ID
+	record.RootCID = (*root).CID
+
+	return record
 }
 
 func (p Publisher) publishTarget(

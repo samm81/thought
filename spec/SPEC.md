@@ -455,7 +455,11 @@ The exact representation of platform-specific identifiers may differ where requi
 
 ## Validation
 
-Before attempting a particular post on a platform, `thought` validates the local source sufficiently to avoid clearly invalid publication attempts.
+Before making any publication network request, `thought` preflights every
+unsent numbered post for every selected destination. A destination's complete
+thread must pass validation before its first post is sent. Preflight validation
+must not log in to a provider, upload media, or make any other publication
+network request.
 
 Validation includes:
 
@@ -465,7 +469,8 @@ Validation includes:
 - attachment existence;
 - content constraints required by the target platform.
 
-A validation problem that applies only to one destination platform does not need to prevent another valid destination from publishing.
+A validation problem that applies only to one destination platform does not
+prevent another destination that passes its complete preflight from publishing.
 
 Validation errors must identify the affected post and the reason publication cannot proceed.
 

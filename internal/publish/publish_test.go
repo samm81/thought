@@ -22,6 +22,8 @@ const (
 type fakeClient struct {
 	responses []xpost.Response
 	requests  []xpost.Request
+	validate  func(xpost.Request) error
+	events    []string
 }
 
 type errorClient struct {
@@ -34,7 +36,21 @@ func (c *errorClient) Publish(_ context.Context, _ xpost.Request) (xpost.Respons
 	return xpost.Response{}, c.err
 }
 
+func (c *errorClient) Validate(context.Context, xpost.Request) error {
+	return nil
+}
+
+func (c *fakeClient) Validate(_ context.Context, request xpost.Request) error {
+	c.events = append(c.events, "validate:"+request.Target+":"+request.Text)
+	if c.validate != nil {
+		return c.validate(request)
+	}
+
+	return nil
+}
+
 func (c *fakeClient) Publish(_ context.Context, request xpost.Request) (xpost.Response, error) {
+	c.events = append(c.events, "publish:"+request.Target+":"+request.Text)
 	c.requests = append(c.requests, request)
 	response := c.responses[0]
 	c.responses = c.responses[1:]
@@ -116,6 +132,46 @@ func TestPublishThreadsAndRecordsReferences(t *testing.T) {
 
 	if filepath.Dir(thought.MetadataPath()) != thought.Path() {
 		t.Fatalf("metadata path is outside thought")
+	}
+}
+
+func TestPublishValidatesEveryPostBeforeSending(t *testing.T) {
+	t.Parallel()
+
+	thought := newThought(t, "01.md", "first", "02.md", "second")
+	client := &fakeClient{
+		responses: []xpost.Response{
+			{Status: responsePublished, RemoteID: "bluesky-first"},
+			{Status: responsePublished, RemoteID: "bluesky-second"},
+		},
+		validate: func(request xpost.Request) error {
+			if request.Target == metadata.TargetX && request.Text == "second" {
+				return errors.New("message too long")
+			}
+
+			return nil
+		},
+	}
+
+	err := New(client).Publish(context.Background(), thought, nil, nil)
+	if err == nil {
+		t.Fatal("Publish() error = nil, want validation error")
+	}
+
+	wantEvents := []string{
+		"validate:bluesky:first",
+		"validate:bluesky:second",
+		"validate:x:first",
+		"validate:x:second",
+		"publish:bluesky:first",
+		"publish:bluesky:second",
+	}
+	if strings.Join(client.events, "\n") != strings.Join(wantEvents, "\n") {
+		t.Fatalf("events = %#v, want %#v", client.events, wantEvents)
+	}
+
+	if !strings.Contains(err.Error(), "x 02: message too long") {
+		t.Fatalf("error = %v, want x validation context", err)
 	}
 }
 

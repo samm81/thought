@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -19,13 +20,15 @@ type structuredRequest struct {
 	RootReplyTo *Reference   `json:"root_reply_to"`
 }
 
+const clientTestMessage = "hello"
+
 func TestPublishDecodesResult(t *testing.T) {
 	t.Parallel()
 
 	command := helperCommand(t, "printf '%s\\n' '{\"status\":\"published\",\"remote_id\":\"post-1\"}'")
 	client := New(command, time.Second)
 
-	response, err := client.Publish(context.Background(), Request{Target: "bluesky", Text: "hello"})
+	response, err := client.Publish(context.Background(), Request{Target: "bluesky", Text: clientTestMessage})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +68,7 @@ func TestPublishSendsStructuredRequest(t *testing.T) {
 
 	request := Request{
 		Target: "x",
-		Text:   "hello",
+		Text:   clientTestMessage,
 		Attachments: []Attachment{{
 			Path: "image.png",
 			Alt:  "a result",
@@ -87,13 +90,57 @@ func TestPublishSendsStructuredRequest(t *testing.T) {
 		t.Fatalf("request = %q: %v", payload, err)
 	}
 
-	structuredRequestAssert(t, got)
+	structuredRequestAssert(t, got, "publish")
 }
 
-func structuredRequestAssert(t *testing.T, got structuredRequest) {
+func TestValidateSendsValidationOperation(t *testing.T) {
+	t.Parallel()
+
+	capturePath := filepath.Join(t.TempDir(), "request.json")
+	command := helperCommand(t, fmt.Sprintf("cat > %q\nprintf '%%s\\n' '{\"status\":\"validated\"}'", capturePath))
+	request := Request{
+		Target: "x",
+		Text:   clientTestMessage,
+		Attachments: []Attachment{{
+			Path: "image.png",
+			Alt:  "a result",
+		}},
+		ReplyTo:     &Reference{ID: "parent-1", CID: "parent-cid"},
+		RootReplyTo: &Reference{ID: "root-1", CID: "root-cid"},
+	}
+
+	if err := New(command, time.Second).Validate(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+
+	payload, err := os.ReadFile(capturePath) //nolint:gosec // test path is created under t.TempDir
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got structuredRequest
+	if err := json.Unmarshal(payload, &got); err != nil {
+		t.Fatalf("request = %q: %v", payload, err)
+	}
+
+	structuredRequestAssert(t, got, "validate")
+}
+
+func TestValidateRejectsRejectedResult(t *testing.T) {
+	t.Parallel()
+
+	command := helperCommand(t, "printf '%s\\n' '{\"status\":\"rejected\",\"error\":\"message too long\"}'")
+
+	err := New(command, time.Second).Validate(context.Background(), Request{})
+	if err == nil || !strings.Contains(err.Error(), "message too long") {
+		t.Fatalf("Validate() error = %v, want rejection", err)
+	}
+}
+
+func structuredRequestAssert(t *testing.T, got structuredRequest, operation string) {
 	t.Helper()
 
-	if got.Operation != "publish" || got.Target != "x" || got.Text != "hello" {
+	if got.Operation != operation || got.Target != "x" || got.Text != clientTestMessage {
 		t.Fatalf("request = %#v", got)
 	}
 
