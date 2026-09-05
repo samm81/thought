@@ -3,6 +3,8 @@ package metadata
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -57,8 +59,9 @@ type Record struct {
 
 // Document is the complete versioned metadata file.
 type Document struct {
-	Version int
-	Posts   map[string]map[string]Record
+	Version    int
+	SourceHash string
+	Posts      map[string]map[string]Record
 }
 
 // Targets returns a new slice containing every product target.
@@ -232,6 +235,17 @@ func (d *Document) Set(post, target string, record Record) error {
 	return nil
 }
 
+// SetSourceHash records the immutable authored source hash.
+func (d *Document) SetSourceHash(hash string) error {
+	if !validSourceHash(hash) {
+		return errors.New("invalid source hash")
+	}
+
+	d.SourceHash = hash
+
+	return nil
+}
+
 // MarkPublishing records the start of a new automatic attempt.
 func (r *Record) MarkPublishing(at time.Time) error {
 	if r.Status == "" {
@@ -323,6 +337,7 @@ func parse(data []byte) (Document, error) {
 	currentPost := ""
 	currentTarget := ""
 	versionFound := false
+	sourceHashFound := false
 
 	lineNumber := 0
 	for scanner.Scan() {
@@ -354,13 +369,28 @@ func parse(data []byte) (Document, error) {
 		value = strings.TrimSpace(value)
 
 		if currentPost == "" {
-			version, err := parseVersionLine(key, value, lineNumber)
-			if err != nil {
-				return Document{}, err
-			}
+			switch key {
+			case "version":
+				version, err := parseVersionLine(value, lineNumber)
+				if err != nil {
+					return Document{}, err
+				}
 
-			document.Version = version
-			versionFound = true
+				document.Version = version
+				versionFound = true
+			case "source_hash":
+				if sourceHashFound {
+					return Document{}, fmt.Errorf("line %d: duplicate source hash", lineNumber)
+				}
+
+				if err := setString(&document.SourceHash, value); err != nil {
+					return Document{}, fmt.Errorf("line %d: invalid source hash: %w", lineNumber, err)
+				}
+
+				sourceHashFound = true
+			default:
+				return Document{}, fmt.Errorf("line %d: unexpected top-level key %q", lineNumber, key)
+			}
 
 			continue
 		}
@@ -411,11 +441,7 @@ func parseTableLine(document *Document, line string) (string, string, error) {
 	return post, target, nil
 }
 
-func parseVersionLine(key, value string, lineNumber int) (int, error) {
-	if key != "version" {
-		return 0, fmt.Errorf("line %d: unexpected top-level key %q", lineNumber, key)
-	}
-
+func parseVersionLine(value string, lineNumber int) (int, error) {
 	version, err := strconv.Atoi(value)
 	if err != nil {
 		return 0, fmt.Errorf("line %d: invalid metadata version", lineNumber)
@@ -434,6 +460,7 @@ func marshal(document Document) ([]byte, error) {
 
 	var output strings.Builder
 	output.WriteString("version = 1\n")
+	writeStringField(&output, "source_hash", document.SourceHash, false)
 
 	for _, post := range posts {
 		targets := document.Posts[post]
@@ -641,6 +668,10 @@ func validateDocument(document Document) error {
 		return fmt.Errorf("unsupported metadata version %d", document.Version)
 	}
 
+	if document.SourceHash != "" && !validSourceHash(document.SourceHash) {
+		return errors.New("invalid source hash")
+	}
+
 	for post, targets := range document.Posts {
 		if strings.TrimSpace(post) == "" {
 			return errors.New("metadata post name is required")
@@ -675,6 +706,22 @@ func validState(state State) bool {
 	default:
 		return false
 	}
+}
+
+func validSourceHash(hash string) bool {
+	const prefix = "sha256:"
+
+	if !strings.HasPrefix(hash, prefix) {
+		return false
+	}
+
+	digest := strings.TrimPrefix(hash, prefix)
+	if len(digest) != sha256.Size*2 {
+		return false
+	}
+
+	_, err := hex.DecodeString(digest)
+	return err == nil
 }
 
 func timeValue(value time.Time) *time.Time {

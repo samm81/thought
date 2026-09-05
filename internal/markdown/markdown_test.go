@@ -24,6 +24,34 @@ func TestParseTrailingAttachments(t *testing.T) {
 	}
 }
 
+func TestParseThreadSplitsOutsideFences(t *testing.T) {
+	t.Parallel()
+
+	documents, err := ParseThread([]byte("first\n---\nsecond\n --- \n```markdown\n---\n```\nthird"), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(documents) != 3 {
+		t.Fatalf("document count = %d, want 3", len(documents))
+	}
+
+	want := []string{"first", "second", "---\nthird"}
+	for index, document := range documents {
+		if document.Text != want[index] {
+			t.Fatalf("document %d text = %q, want %q", index+1, document.Text, want[index])
+		}
+	}
+}
+
+func TestParseThreadRejectsEmptySection(t *testing.T) {
+	t.Parallel()
+
+	if _, err := ParseThread([]byte("first\n---\n\n---\nthird"), t.TempDir()); err == nil {
+		t.Fatal("ParseThread() error = nil, want empty section error")
+	}
+}
+
 func TestParseRejectsInlineAndNonTrailingImages(t *testing.T) {
 	t.Parallel()
 

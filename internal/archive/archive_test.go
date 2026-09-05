@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestCreateAndPosts(t *testing.T) {
+func TestCreateAndReadSource(t *testing.T) {
 	t.Parallel()
 
 	root, err := New(filepath.Join(t.TempDir(), "thoughts"))
@@ -26,17 +26,17 @@ func TestCreateAndPosts(t *testing.T) {
 		t.Fatalf("Name() = %q, want release-note", thought.Name())
 	}
 
-	if _, err := os.Stat(filepath.Join(thought.Path(), "01.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(thought.Path(), "post.md")); err != nil {
 		t.Fatalf("initial post: %v", err)
 	}
 
-	posts, err := thought.Posts()
+	source, err := thought.ReadSource()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if len(posts) != 1 || posts[0].Number != 1 {
-		t.Fatalf("Posts() = %#v, want one post numbered 1", posts)
+	if source.Path != filepath.Join(thought.Path(), "post.md") || len(source.Data) != 0 {
+		t.Fatalf("source = %#v, want empty post.md", source)
 	}
 }
 
@@ -65,7 +65,7 @@ func TestCreateGeneratedName(t *testing.T) {
 	}
 }
 
-func TestPostsRejectInvalidSequence(t *testing.T) {
+func TestReadSourceRejectsLegacyPosts(t *testing.T) {
 	t.Parallel()
 
 	rootDirectory := t.TempDir()
@@ -75,7 +75,7 @@ func TestPostsRejectInvalidSequence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, name := range []string{"01.md", "03.md"} {
+	for _, name := range []string{"01.md", "02.md"} {
 		if err := os.WriteFile(filepath.Join(directory, name), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -91,9 +91,9 @@ func TestPostsRejectInvalidSequence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = thought.Posts()
+	_, err = thought.ReadSource()
 	if err == nil {
-		t.Fatal("Posts() error = nil, want sequence error")
+		t.Fatal("ReadSource() error = nil, want legacy format error")
 	}
 }
 

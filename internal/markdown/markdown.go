@@ -21,7 +21,7 @@ type Document struct {
 	Attachments []Attachment
 }
 
-// Parse parses Markdown text and extracts a trailing image block.
+// Parse parses one Markdown post and extracts a trailing image block.
 func Parse(data []byte) (Document, error) {
 	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
 	textLines := make([]string, 0, len(lines))
@@ -73,28 +73,34 @@ func Parse(data []byte) (Document, error) {
 	}, nil
 }
 
-// ParseFile parses a post and resolves its attachments inside thoughtPath.
-func ParseFile(path, thoughtPath string) (Document, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // path comes from the validated local thought archive
-	if err != nil {
-		return Document{}, fmt.Errorf("read markdown: %w", err)
-	}
+// ParseThread parses the posts in one source file and resolves their attachments.
+func ParseThread(data []byte, thoughtPath string) ([]Document, error) {
+	sections := splitThread(data)
+	documents := make([]Document, 0, len(sections))
 
-	document, err := Parse(data)
-	if err != nil {
-		return Document{}, fmt.Errorf("parse markdown: %w", err)
-	}
-
-	for index, attachment := range document.Attachments {
-		resolved, err := ResolveAttachment(thoughtPath, attachment.Path)
-		if err != nil {
-			return Document{}, fmt.Errorf("attachment %q: %w", attachment.Path, err)
+	for index, section := range sections {
+		if len(sections) > 1 && strings.TrimSpace(section) == "" {
+			return nil, fmt.Errorf("post %02d is empty", index+1)
 		}
 
-		document.Attachments[index].Path = resolved
+		document, err := Parse([]byte(section))
+		if err != nil {
+			return nil, fmt.Errorf("parse post %02d: %w", index+1, err)
+		}
+
+		for attachmentIndex, attachment := range document.Attachments {
+			resolved, err := ResolveAttachment(thoughtPath, attachment.Path)
+			if err != nil {
+				return nil, fmt.Errorf("post %02d attachment %q: %w", index+1, attachment.Path, err)
+			}
+
+			document.Attachments[attachmentIndex].Path = resolved
+		}
+
+		documents = append(documents, document)
 	}
 
-	return document, nil
+	return documents, nil
 }
 
 // ResolveAttachment validates and resolves one local attachment path.
@@ -290,6 +296,30 @@ func replaceLinks(line string) string {
 
 		line = line[closeURL+1:]
 	}
+}
+
+func splitThread(data []byte) []string {
+	normalized := strings.ReplaceAll(string(data), "\r\n", "\n")
+	lines := strings.Split(normalized, "\n")
+	sections := make([]string, 0, 1)
+	sectionLines := make([]string, 0, len(lines))
+	inFence := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !inFence && trimmed == "---" {
+			sections = append(sections, strings.Join(sectionLines, "\n"))
+			sectionLines = make([]string, 0, len(lines))
+			continue
+		}
+
+		sectionLines = append(sectionLines, line)
+		if isFence(trimmed) {
+			inFence = !inFence
+		}
+	}
+
+	return append(sections, strings.Join(sectionLines, "\n"))
 }
 
 func isFence(line string) bool {

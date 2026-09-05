@@ -77,19 +77,19 @@ The user can use the native apps for those activities.
 
 Each thought is represented by its own directory.
 
-Every thought begins with a file named:
+Every thought contains one authored Markdown file named:
 
 ```text
-01.md
+post.md
 ```
 
-This is true whether the thought ultimately contains one post or becomes a thread.
+This file contains one post or a complete thread.
 
 A simple thought might contain:
 
 ```text
 <post-directory>/
-├── 01.md
+├── post.md
 ├── meta.toml
 └── screenshot.png
 ```
@@ -98,9 +98,7 @@ A thread might contain:
 
 ```text
 <post-directory>/
-├── 01.md
-├── 02.md
-├── 03.md
+├── post.md
 ├── meta.toml
 ├── screenshot.png
 └── detail.png
@@ -117,8 +115,8 @@ The archive root defaults to `~/thoughts`. The user may change it with
 
 The product provides these explicit commands:
 
-- `new [name]` creates a thought and opens its initial post for editing;
-- `edit <name-or-directory>` opens all numbered Markdown files for that thought together;
+- `new [name]` creates a thought and opens `post.md` for editing;
+- `edit <name-or-directory>` opens `post.md` for editing;
 - `publish [name-or-directory] [--target bluesky|x]` publishes to both destinations by
   default, or only to the selected destination. When the thought is omitted,
   `thought` selects the most recent thought and asks for confirmation before
@@ -137,44 +135,36 @@ destinations are already published; the user must provide an explicit thought
 to republish or inspect.
 
 When `new` is called without a name, the thought receives a timestamped
-directory name. `edit` opens the numbered files in numerical order in one
-editor session. None of these editing actions publish anything.
+directory name. None of these editing actions publish anything.
 
-## Post files
+## Thread structure
 
-Each numbered Markdown file represents exactly one social post.
+Each section of `post.md` represents exactly one social post.
 
-Post filenames use two-digit sequential numbering:
+Sections are separated by a line containing only `---`:
 
-```text
-01.md
-02.md
-03.md
-...
+```markdown
+the first post
+
+---
+
+the second post
+
+---
+
+the third post
 ```
 
-Files must form one contiguous sequence starting at `01.md`.
+Sections are published in the order in which they appear in the file. A
+`---` line inside a fenced code block is part of that post and does not split
+the thread.
 
-For example:
+The file must contain at least one post section. Empty sections are invalid.
+Separate numbered Markdown files are not supported.
 
-```text
-01.md
-02.md
-03.md
-```
-
-is valid.
-
-```text
-01.md
-03.md
-```
-
-is invalid.
-
-A thought containing only `01.md` is a normal single post.
-
-A thought containing `01.md` and later numbered files is a thread.
+The position of a section is its local post number for publication state and
+thread recovery. The first section is post `01`, the second is post `02`, and
+so on.
 
 ## Markdown
 
@@ -190,9 +180,9 @@ Image declarations are treated specially as attachments rather than post text.
 
 ## Image attachments
 
-Images are stored directly in the same thought directory as the Markdown files.
+Images are stored directly in the same thought directory as `post.md`.
 
-A Markdown image declaration attaches an image to that individual post:
+A Markdown image declaration attaches an image to that individual post section:
 
 ```markdown
 Finally got the reflections working.
@@ -207,7 +197,8 @@ The Markdown alt text becomes the attachment's alt text where supported by the d
 
 ### Attachment position
 
-Image declarations must form a trailing attachment block at the end of each Markdown file.
+Image declarations must form a trailing attachment block at the end of each
+post section.
 
 Once the first image declaration appears, only additional image declarations and whitespace may follow.
 
@@ -255,24 +246,29 @@ The archive must therefore remain self-contained.
 
 Publishing is an explicit operation separate from editing.
 
-When a thought is published, `thought` discovers all contiguous numbered Markdown files beginning with `01.md`.
-
-It then publishes them in numerical order.
+When a thought is published, `thought` reads the post sections in `post.md`.
+It publishes them in file order.
 
 For a single-post thought:
 
-```text
-01.md
+```markdown
+one post
 ```
 
-is published as a top-level post.
+the section is published as a top-level post.
 
 For a thread:
 
-```text
-01.md
-02.md
-03.md
+```markdown
+first post
+
+---
+
+second post
+
+---
+
+third post
 ```
 
 the resulting platform structure is:
@@ -285,7 +281,8 @@ the resulting platform structure is:
 
 Each destination platform receives its own correctly linked thread.
 
-The relationship is derived entirely from the numbered files. Authors do not manually specify reply IDs.
+The relationship is derived entirely from the section order. Authors do not
+manually specify reply IDs.
 
 ### Publishing configuration
 
@@ -301,7 +298,7 @@ override file values for temporary use and compatibility with scripts.
 
 ### Publication states
 
-Each numbered post has an independent state for each destination:
+Each post section has an independent state for each destination:
 
 - `pending`: the post is eligible to be published;
 - `publishing`: a publication attempt is active and its final remote outcome is
@@ -339,9 +336,9 @@ For example:
 ```text
              X       Bluesky
 
-01.md        ✓          ✓
-02.md        ✓          ✗
-03.md        ✓       pending
+post 01      ✓          ✓
+post 02      ✓          ✗
+post 03      ✓       pending
 ```
 
 is a valid state.
@@ -352,19 +349,25 @@ X may continue successfully even though Bluesky encountered a failure.
 
 Within a given platform, publication stops at the first failed post.
 
-If:
+If the source contains:
 
-```text
-01.md
-02.md
-03.md
+```markdown
+first post
+
+---
+
+second post
+
+---
+
+third post
 ```
 
-are being published and `02.md` fails on Bluesky:
+and the second post fails on Bluesky:
 
-- Bluesky `01.md` remains published.
-- Bluesky `02.md` is recorded as failed.
-- Bluesky `03.md` is not attempted.
+- Bluesky post `01` remains published.
+- Bluesky post `02` is recorded as failed.
+- Bluesky post `03` is not attempted.
 - Other platforms may continue independently.
 
 The same stop rule applies when an entry is `rejected` or remains
@@ -392,26 +395,35 @@ Posts blocked behind a failed earlier thread entry become eligible only after th
 For example, if Bluesky has:
 
 ```text
-01.md   posted
-02.md   failed
-03.md   pending
+post 01   posted
+post 02   failed
+post 03   pending
 ```
 
 a later retry should:
 
-1. retry `02.md`;
-2. if successful, publish `03.md` as a reply to it;
+1. retry post `02`;
+2. if successful, publish post `03` as a reply to it;
 3. stop again if another failure occurs.
 
-## Published posts are immutable
+## Source and published-post immutability
 
-Once a particular numbered post has successfully published to a platform, `thought` treats that remote publication as immutable.
+Once a particular post section has successfully published to a platform,
+`thought` treats that remote publication as immutable.
 
-Later changes to the corresponding local Markdown or images do not update the remote post.
+Later changes to the local source or images do not update the remote post.
 
 Running publish again must not duplicate or replace a successfully published remote post.
 
-The user may still edit their local archive freely. Those edits only change the local canonical record.
+Before the first publication request in a run, `thought` stores a hash of the
+complete `post.md` file. It checks the file against that hash before each later
+publication request. If the file changes, `thought` stops before sending the
+next request, even if the change only reorders sections or changes whitespace.
+
+The file can still be edited by ordinary tools, but a run that has started
+cannot continue with changed source. The user must inspect the destinations
+and manually recover the publication metadata before intentionally changing
+the source for a new run.
 
 Remote editing or deletion can be performed manually using the platform's own app and is outside `thought`'s responsibility.
 
@@ -432,7 +444,7 @@ This file records publication state separately from authored content.
 
 It must remain human-readable.
 
-For each numbered post and each target platform, the metadata records enough information to determine:
+For each post section and each target platform, the metadata records enough information to determine:
 
 - whether publication is pending, publishing, successful, failed, or
   rejected;
@@ -442,6 +454,9 @@ For each numbered post and each target platform, the metadata records enough inf
 - the public link to the published post when available;
 - any information required to correctly link subsequent posts in the same thread;
 - the most recent publication error when publication failed.
+
+When publication has begun, metadata also records the hash of the complete
+`post.md` source that the run is publishing.
 
 Posts that have not yet been attempted remain pending.
 
@@ -456,14 +471,15 @@ The exact representation of platform-specific identifiers may differ where requi
 ## Validation
 
 Before making any publication network request, `thought` preflights every
-unsent numbered post for every selected destination. A destination's complete
+unsent post section for every selected destination. A destination's complete
 thread must pass validation before its first post is sent. Preflight validation
 must not log in to a provider, upload media, or make any other publication
 network request.
 
 Validation includes:
 
-- numbered Markdown files forming a contiguous sequence;
+- `post.md` containing valid, non-empty post sections in order;
+- `---` separators inside fenced code remaining part of the post;
 - attachment placement rules;
 - attachment path safety;
 - attachment existence;
@@ -479,7 +495,7 @@ Validation errors must identify the affected post and the reason publication can
 A thought directory contains everything needed to understand the authored thought and its publication history:
 
 ```text
-NN.md       authored posts
+post.md     authored post or thread
 image files attachments
 meta.toml   publication state and remote references
 ```

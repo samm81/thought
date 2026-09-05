@@ -98,7 +98,7 @@ func TestRunNewCreatesThought(t *testing.T) {
 
 	thoughtPath := strings.TrimSpace(output.String())
 	for _, path := range []string{
-		filepath.Join(thoughtPath, "01.md"),
+		filepath.Join(thoughtPath, "post.md"),
 		filepath.Join(thoughtPath, "meta.toml"),
 	} {
 		if _, err := os.Stat(path); err != nil {
@@ -293,7 +293,7 @@ func recentThoughts(t *testing.T, root archive.Root) (archive.Thought, archive.T
 		{thought: older, content: "old"},
 		{thought: newer, content: "new"},
 	} {
-		if err := os.WriteFile(filepath.Join(item.thought.Path(), "01.md"), []byte(item.content), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(item.thought.Path(), "post.md"), []byte(item.content), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -3,6 +3,8 @@ package publish
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -38,9 +40,14 @@ func New(client Client) Publisher {
 
 // NeedsPublication reports whether any selected post still needs publication.
 func NeedsPublication(thought archive.Thought, targetNames []string) (bool, error) {
-	posts, err := thought.Posts()
+	source, err := thought.ReadSource()
 	if err != nil {
-		return false, fmt.Errorf("discover posts: %w", err)
+		return false, fmt.Errorf("read source: %w", err)
+	}
+
+	documents, err := markdown.ParseThread(source.Data, thought.Path())
+	if err != nil {
+		return false, fmt.Errorf("parse source: %w", err)
 	}
 
 	targets, err := normalizeTargets(targetNames)
@@ -48,13 +55,13 @@ func NeedsPublication(thought archive.Thought, targetNames []string) (bool, erro
 		return false, err
 	}
 
-	publication, err := metadata.Load(thought.MetadataPath(), postNames(posts))
+	publication, err := metadata.Load(thought.MetadataPath(), postNames(len(documents)))
 	if err != nil {
 		return false, fmt.Errorf("load publication metadata: %w", err)
 	}
 
-	for _, post := range posts {
-		postName := fmt.Sprintf("%02d", post.Number)
+	for index := range documents {
+		postName := postName(index)
 		for _, target := range targets {
 			if publication.Get(postName, target).Status != metadata.StatePublished {
 				return true, nil
@@ -67,19 +74,14 @@ func NeedsPublication(thought archive.Thought, targetNames []string) (bool, erro
 
 // Publish publishes a thought to the selected targets.
 func (p Publisher) Publish(ctx context.Context, thought archive.Thought, targetNames []string, output io.Writer) error {
-	posts, err := thought.Posts()
+	source, err := thought.ReadSource()
 	if err != nil {
-		return fmt.Errorf("discover posts: %w", err)
+		return fmt.Errorf("read source: %w", err)
 	}
 
-	documents := make([]markdown.Document, len(posts))
-	for index, post := range posts {
-		document, err := markdown.ParseFile(post.Path, thought.Path())
-		if err != nil {
-			return fmt.Errorf("parse post %02d: %w", post.Number, err)
-		}
-
-		documents[index] = document
+	documents, err := markdown.ParseThread(source.Data, thought.Path())
+	if err != nil {
+		return fmt.Errorf("parse source: %w", err)
 	}
 
 	targets, err := normalizeTargets(targetNames)
@@ -87,18 +89,35 @@ func (p Publisher) Publish(ctx context.Context, thought archive.Thought, targetN
 		return err
 	}
 
-	publication, err := metadata.Load(thought.MetadataPath(), postNames(posts))
+	publication, err := metadata.Load(thought.MetadataPath(), postNames(len(documents)))
 	if err != nil {
 		return fmt.Errorf("load publication metadata: %w", err)
+	}
+
+	sourceHash := hashSource(source.Data)
+	if publication.SourceHash != "" && publication.SourceHash != sourceHash {
+		return sourceChangedError(publication.SourceHash, sourceHash)
 	}
 
 	if output == nil {
 		output = io.Discard
 	}
 
-	preflightErrors, err := p.validatePosts(ctx, posts, documents, targets, &publication)
+	preflightErrors, err := p.validatePosts(ctx, documents, targets, &publication)
 	if err != nil {
 		return err
+	}
+
+	for _, target := range targets {
+		if preflightErrors[target] != nil || !needsPublication(documents, target, publication) {
+			continue
+		}
+
+		if err := lockSource(thought, sourceHash, &publication); err != nil {
+			return err
+		}
+
+		break
 	}
 
 	var targetErrors []error
@@ -109,7 +128,7 @@ func (p Publisher) Publish(ctx context.Context, thought archive.Thought, targetN
 			continue
 		}
 
-		err := p.publishTarget(ctx, thought, posts, documents, target, &publication, output)
+		err := p.publishTarget(ctx, thought, documents, sourceHash, target, &publication, output)
 		if err == nil {
 			continue
 		}
@@ -130,7 +149,6 @@ func (p Publisher) Publish(ctx context.Context, thought archive.Thought, targetN
 
 func (p Publisher) validatePosts(
 	ctx context.Context,
-	posts []archive.Post,
 	documents []markdown.Document,
 	targets []string,
 	publication *metadata.Document,
@@ -143,12 +161,12 @@ func (p Publisher) validatePosts(
 			root   *xpost.Reference
 		)
 
-		for index, post := range posts {
+		for index := range documents {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
 
-			postName := fmt.Sprintf("%02d", post.Number)
+			postName := postName(index)
 			record := publication.Get(postName, target)
 
 			published, err := advancePublishedRecord(record, &parent, &root)
@@ -208,8 +226,8 @@ func recordForValidation(record metadata.Record, parent *xpost.Reference, root *
 func (p Publisher) publishTarget(
 	ctx context.Context,
 	thought archive.Thought,
-	posts []archive.Post,
 	documents []markdown.Document,
+	sourceHash string,
 	target string,
 	publication *metadata.Document,
 	output io.Writer,
@@ -219,8 +237,8 @@ func (p Publisher) publishTarget(
 		root   *xpost.Reference
 	)
 
-	for index, post := range posts {
-		postName := fmt.Sprintf("%02d", post.Number)
+	for index := range documents {
+		postName := postName(index)
 
 		record := publication.Get(postName, target)
 
@@ -237,11 +255,15 @@ func (p Publisher) publishTarget(
 			return targetError(target, postName, err)
 		}
 
+		if err := verifySourceHash(thought, sourceHash); err != nil {
+			return targetError(target, postName, err)
+		}
+
 		if err := p.startPublication(thought, target, postName, publication, &record); err != nil {
 			return targetError(target, postName, err)
 		}
 
-		current, err := p.publishPost(ctx, thought, documents[index], target, postName, record, publication, output)
+		current, err := p.publishPost(ctx, thought, documents[index], sourceHash, target, postName, record, publication, output)
 		if err != nil {
 			return err
 		}
@@ -329,12 +351,16 @@ func (p Publisher) publishPost(
 	ctx context.Context,
 	thought archive.Thought,
 	document markdown.Document,
+	sourceHash string,
 	target, postName string,
 	record metadata.Record,
 	publication *metadata.Document,
 	output io.Writer,
 ) (*xpost.Reference, error) {
 	request := buildRequest(document, target, record)
+	if err := verifySourceHash(thought, sourceHash); err != nil {
+		return nil, targetError(target, postName, err)
+	}
 
 	response, err := p.client.Publish(ctx, request)
 	if err != nil {
@@ -489,13 +515,82 @@ func validTarget(target string) bool {
 	return target == metadata.TargetBluesky || target == metadata.TargetX
 }
 
-func postNames(posts []archive.Post) []string {
-	names := make([]string, 0, len(posts))
-	for _, post := range posts {
-		names = append(names, fmt.Sprintf("%02d", post.Number))
+func postNames(count int) []string {
+	names := make([]string, 0, count)
+	for index := range count {
+		names = append(names, postName(index))
 	}
 
 	return names
+}
+
+func postName(index int) string {
+	return fmt.Sprintf("%02d", index+1)
+}
+
+func needsPublication(documents []markdown.Document, target string, publication metadata.Document) bool {
+	for index := range documents {
+		if publication.Get(postName(index), target).Status != metadata.StatePublished {
+			return true
+		}
+	}
+
+	return false
+}
+
+func lockSource(thought archive.Thought, sourceHash string, publication *metadata.Document) error {
+	if publication.SourceHash != "" {
+		return nil
+	}
+
+	if hasPublicationActivity(*publication) {
+		return errors.New("publication metadata has no source hash; inspect existing publication and set source_hash before retrying")
+	}
+
+	if err := publication.SetSourceHash(sourceHash); err != nil {
+		return err
+	}
+
+	if err := metadata.Save(thought.MetadataPath(), *publication); err != nil {
+		return fmt.Errorf("save source hash: %w", err)
+	}
+
+	return nil
+}
+
+func hasPublicationActivity(publication metadata.Document) bool {
+	for _, targets := range publication.Posts {
+		for _, record := range targets {
+			if record.Status != metadata.StatePending {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func verifySourceHash(thought archive.Thought, expected string) error {
+	source, err := thought.ReadSource()
+	if err != nil {
+		return fmt.Errorf("verify source: %w", err)
+	}
+
+	actual := hashSource(source.Data)
+	if actual != expected {
+		return sourceChangedError(expected, actual)
+	}
+
+	return nil
+}
+
+func hashSource(data []byte) string {
+	digest := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(digest[:])
+}
+
+func sourceChangedError(expected, actual string) error {
+	return fmt.Errorf("source file changed after publication began (expected %s, found %s); inspect destinations and recover metadata manually", expected, actual)
 }
 
 func targetError(target, post string, err error) error {

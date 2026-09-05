@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/samm81/thought/internal/archive"
 	"github.com/samm81/thought/internal/editor"
+	"github.com/samm81/thought/internal/markdown"
 	"github.com/samm81/thought/internal/metadata"
 	"github.com/samm81/thought/internal/publish"
 	"github.com/samm81/thought/internal/xpost"
@@ -112,7 +112,12 @@ func runNew(ctx context.Context, arguments []string, output io.Writer) error {
 		return fmt.Errorf("initialize metadata: %w", err)
 	}
 
-	if err := editor.Open(ctx, editor.FromEnvironment(), []string{filepath.Join(thought.Path(), "01.md")}); err != nil {
+	source, err := thought.ReadSource()
+	if err != nil {
+		return fmt.Errorf("read new thought source: %w", err)
+	}
+
+	if err := editor.Open(ctx, editor.FromEnvironment(), []string{source.Path}); err != nil {
 		return err
 	}
 
@@ -138,17 +143,12 @@ func runEdit(ctx context.Context, arguments []string) error {
 		return err
 	}
 
-	posts, err := thought.Posts()
+	source, err := thought.ReadSource()
 	if err != nil {
-		return fmt.Errorf("discover posts: %w", err)
+		return fmt.Errorf("read source: %w", err)
 	}
 
-	paths := make([]string, 0, len(posts))
-	for _, post := range posts {
-		paths = append(paths, post.Path)
-	}
-
-	return editor.Open(ctx, editor.FromEnvironment(), paths)
+	return editor.Open(ctx, editor.FromEnvironment(), []string{source.Path})
 }
 
 func runPublish(ctx context.Context, arguments []string, input io.Reader, output io.Writer) error {
@@ -227,12 +227,17 @@ func runStatus(arguments []string, output io.Writer) error {
 		return err
 	}
 
-	posts, err := thought.Posts()
+	source, err := thought.ReadSource()
 	if err != nil {
-		return fmt.Errorf("discover posts: %w", err)
+		return fmt.Errorf("read source: %w", err)
 	}
 
-	publication, err := metadata.Load(thought.MetadataPath(), postNames(posts))
+	documents, err := markdown.ParseThread(source.Data, thought.Path())
+	if err != nil {
+		return fmt.Errorf("parse source: %w", err)
+	}
+
+	publication, err := metadata.Load(thought.MetadataPath(), postNames(len(documents)))
 	if err != nil {
 		return fmt.Errorf("load publication metadata: %w", err)
 	}
@@ -241,8 +246,8 @@ func runStatus(arguments []string, output io.Writer) error {
 		return fmt.Errorf("write status: %w", err)
 	}
 
-	for _, post := range posts {
-		postName := fmt.Sprintf("%02d", post.Number)
+	for index := range documents {
+		postName := fmt.Sprintf("%02d", index+1)
 		for _, target := range metadata.Targets() {
 			record := publication.Get(postName, target)
 			if err := writeRecordStatus(output, postName, target, record); err != nil {
@@ -369,10 +374,10 @@ func publishTargetText(targets []string) string {
 	return strings.Join(targets, ", ")
 }
 
-func postNames(posts []archive.Post) []string {
-	names := make([]string, 0, len(posts))
-	for _, post := range posts {
-		names = append(names, fmt.Sprintf("%02d", post.Number))
+func postNames(count int) []string {
+	names := make([]string, 0, count)
+	for index := range count {
+		names = append(names, fmt.Sprintf("%02d", index+1))
 	}
 
 	return names

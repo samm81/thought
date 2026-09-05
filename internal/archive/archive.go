@@ -6,15 +6,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
 
 const (
 	defaultArchiveDirectory = "thoughts"
-	firstPostName           = "01.md"
+	sourceFileName          = "post.md"
 )
 
 // Root identifies the directory containing all thoughts.
@@ -28,10 +26,10 @@ type Thought struct {
 	path string
 }
 
-// Post identifies one numbered Markdown file.
-type Post struct {
-	Number int
-	Path   string
+// Source contains the authored Markdown source for one thought.
+type Source struct {
+	Path string
+	Data []byte
 }
 
 // FromEnvironment resolves THOUGHT_HOME or the default archive location.
@@ -177,7 +175,7 @@ func (r Root) Create(name string, at time.Time) (Thought, error) {
 			return Thought{}, fmt.Errorf("create thought %q: %w", candidateName, err)
 		}
 
-		postPath := filepath.Join(candidatePath, firstPostName)
+		postPath := filepath.Join(candidatePath, sourceFileName)
 
 		file, err := os.OpenFile(postPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // postPath is built from the validated archive root and name
 		if err != nil {
@@ -207,97 +205,43 @@ func (t Thought) MetadataPath() string {
 	return filepath.Join(t.path, "meta.toml")
 }
 
-// Posts discovers all contiguous numbered Markdown files in the thought.
-func (t Thought) Posts() ([]Post, error) {
+// ReadSource reads the single authored Markdown source for the thought.
+func (t Thought) ReadSource() (Source, error) {
 	entries, err := os.ReadDir(t.path)
 	if err != nil {
-		return nil, fmt.Errorf("read thought directory: %w", err)
+		return Source{}, fmt.Errorf("read thought directory: %w", err)
 	}
 
-	posts := make(map[int]Post)
-
 	for _, entry := range entries {
-		post, ok, err := postFromEntry(t.path, entry)
-		if err != nil {
-			return nil, err
-		}
-
-		if !ok {
+		if entry.Name() == sourceFileName {
 			continue
 		}
 
-		if _, exists := posts[post.Number]; exists {
-			return nil, fmt.Errorf("duplicate post number %02d", post.Number)
+		if strings.EqualFold(filepath.Ext(entry.Name()), ".md") {
+			return Source{}, fmt.Errorf("unsupported Markdown source %q; use post.md with --- separators", entry.Name())
+		}
+	}
+
+	path := filepath.Join(t.path, sourceFileName)
+	info, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Source{}, errors.New("post.md is required")
 		}
 
-		posts[post.Number] = post
-	}
-
-	return sequencePosts(posts)
-}
-
-func postFromEntry(thoughtPath string, entry os.DirEntry) (Post, bool, error) {
-	name := entry.Name()
-	if !strings.HasSuffix(name, ".md") {
-		return Post{}, false, nil
-	}
-
-	stem := strings.TrimSuffix(name, ".md")
-	if !allDigits(stem) {
-		return Post{}, false, nil
-	}
-
-	if len(stem) != 2 {
-		return Post{}, false, fmt.Errorf("invalid post filename %q: use two digits", name)
-	}
-
-	number, err := strconv.Atoi(stem)
-	if err != nil || number < 1 {
-		return Post{}, false, fmt.Errorf("invalid post filename %q", name)
-	}
-
-	info, err := entry.Info()
-	if err != nil {
-		return Post{}, false, fmt.Errorf("inspect post %q: %w", name, err)
+		return Source{}, fmt.Errorf("inspect post.md: %w", err)
 	}
 
 	if !info.Mode().IsRegular() {
-		return Post{}, false, fmt.Errorf("post %q is not a regular file", name)
+		return Source{}, errors.New("post.md is not a regular file")
 	}
 
-	return Post{
-		Number: number,
-		Path:   filepath.Join(thoughtPath, name),
-	}, true, nil
-}
-
-func sequencePosts(posts map[int]Post) ([]Post, error) {
-	if len(posts) == 0 {
-		return nil, errors.New("no numbered posts found")
+	data, err := os.ReadFile(path) //nolint:gosec // path is inside the validated thought archive
+	if err != nil {
+		return Source{}, fmt.Errorf("read post.md: %w", err)
 	}
 
-	if _, ok := posts[1]; !ok {
-		return nil, errors.New("post sequence must start at 01.md")
-	}
-
-	numbers := make([]int, 0, len(posts))
-	for number := range posts {
-		numbers = append(numbers, number)
-	}
-
-	sort.Ints(numbers)
-
-	result := make([]Post, 0, len(numbers))
-	for index, number := range numbers {
-		expected := index + 1
-		if number != expected {
-			return nil, fmt.Errorf("post sequence skips %02d.md", expected)
-		}
-
-		result = append(result, posts[number])
-	}
-
-	return result, nil
+	return Source{Path: path, Data: data}, nil
 }
 
 func expandHome(path string) (string, error) {
@@ -378,18 +322,4 @@ func validateName(name string) error {
 	}
 
 	return nil
-}
-
-func allDigits(value string) bool {
-	if value == "" {
-		return false
-	}
-
-	for _, character := range value {
-		if character < '0' || character > '9' {
-			return false
-		}
-	}
-
-	return true
 }

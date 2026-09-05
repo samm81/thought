@@ -23,6 +23,7 @@ type fakeClient struct {
 	responses []xpost.Response
 	requests  []xpost.Request
 	validate  func(xpost.Request) error
+	publish   func(xpost.Request)
 	events    []string
 }
 
@@ -52,6 +53,10 @@ func (c *fakeClient) Validate(_ context.Context, request xpost.Request) error {
 func (c *fakeClient) Publish(_ context.Context, request xpost.Request) (xpost.Response, error) {
 	c.events = append(c.events, "publish:"+request.Target+":"+request.Text)
 	c.requests = append(c.requests, request)
+	if c.publish != nil {
+		c.publish(request)
+	}
+
 	response := c.responses[0]
 	c.responses = c.responses[1:]
 
@@ -61,7 +66,7 @@ func (c *fakeClient) Publish(_ context.Context, request xpost.Request) (xpost.Re
 func TestNeedsPublication(t *testing.T) {
 	t.Parallel()
 
-	thought := newThought(t, "01.md", "first")
+	thought := newThought(t, "first")
 
 	needs, err := NeedsPublication(thought, nil)
 	if err != nil {
@@ -105,7 +110,7 @@ func TestNeedsPublication(t *testing.T) {
 func TestPublishThreadsAndRecordsReferences(t *testing.T) {
 	t.Parallel()
 
-	thought := newThought(t, "01.md", "first", "02.md", "second")
+	thought := newThought(t, "first\n---\nsecond")
 	client := &fakeClient{responses: []xpost.Response{
 		{Status: responsePublished, RemoteID: "at://first", RemoteCID: "cid-first"},
 		{Status: responsePublished, RemoteID: "at://second", RemoteCID: "cid-second"},
@@ -130,6 +135,10 @@ func TestPublishThreadsAndRecordsReferences(t *testing.T) {
 		t.Fatalf("second state = %q", publication.Get("02", metadata.TargetBluesky).Status)
 	}
 
+	if got, want := publication.SourceHash, hashSource([]byte("first\n---\nsecond")); got != want {
+		t.Fatalf("source hash = %q, want %q", got, want)
+	}
+
 	if filepath.Dir(thought.MetadataPath()) != thought.Path() {
 		t.Fatalf("metadata path is outside thought")
 	}
@@ -138,7 +147,7 @@ func TestPublishThreadsAndRecordsReferences(t *testing.T) {
 func TestPublishValidatesEveryPostBeforeSending(t *testing.T) {
 	t.Parallel()
 
-	thought := newThought(t, "01.md", "first", "02.md", "second")
+	thought := newThought(t, "first\n---\nsecond")
 	client := &fakeClient{
 		responses: []xpost.Response{
 			{Status: responsePublished, RemoteID: "bluesky-first"},
@@ -178,7 +187,7 @@ func TestPublishValidatesEveryPostBeforeSending(t *testing.T) {
 func TestPublishStopsAfterFailure(t *testing.T) {
 	t.Parallel()
 
-	thought := newThought(t, "01.md", "first", "02.md", "second", "03.md", "third")
+	thought := newThought(t, "first\n---\nsecond\n---\nthird")
 	client := &fakeClient{responses: []xpost.Response{
 		{Status: responsePublished, RemoteID: "at://first", RemoteCID: "cid-first"},
 		{Status: "failed", ErrorKind: errorTransport, Error: "timeout"},
@@ -207,10 +216,57 @@ func TestPublishStopsAfterFailure(t *testing.T) {
 	}
 }
 
+func TestPublishStopsWhenSourceChanges(t *testing.T) {
+	t.Parallel()
+
+	thought := newThought(t, "first\n---\nsecond")
+	client := &fakeClient{
+		responses: []xpost.Response{
+			{Status: responsePublished, RemoteID: "at://first"},
+			{Status: responsePublished, RemoteID: "at://second"},
+		},
+	}
+	client.publish = func(_ xpost.Request) {
+		if len(client.requests) != 1 {
+			return
+		}
+
+		if err := os.WriteFile(filepath.Join(thought.Path(), "post.md"), []byte("changed\n---\nsecond"), 0o600); err != nil {
+			t.Fatalf("change source: %v", err)
+		}
+	}
+
+	err := New(client).Publish(context.Background(), thought, []string{metadata.TargetBluesky}, nil)
+	if err == nil || !strings.Contains(err.Error(), "source file changed") {
+		t.Fatalf("Publish() error = %v, want source change error", err)
+	}
+
+	if len(client.requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(client.requests))
+	}
+
+	publication, err := metadata.Load(thought.MetadataPath(), []string{"01", "02"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := publication.Get("01", metadata.TargetBluesky).Status; got != metadata.StatePublished {
+		t.Fatalf("first state = %q, want published", got)
+	}
+
+	if got := publication.Get("02", metadata.TargetBluesky).Status; got != metadata.StatePending {
+		t.Fatalf("second state = %q, want pending", got)
+	}
+
+	if got, want := publication.SourceHash, hashSource([]byte("first\n---\nsecond")); got != want {
+		t.Fatalf("source hash = %q, want %q", got, want)
+	}
+}
+
 func TestPublishKeepsTargetsIndependent(t *testing.T) {
 	t.Parallel()
 
-	thought := newThought(t, "01.md", "first")
+	thought := newThought(t, "first")
 	client := &fakeClient{responses: []xpost.Response{
 		{Status: "failed", ErrorKind: errorTransport, Error: "network"},
 		{Status: responsePublished, RemoteID: "x-1"},
@@ -238,8 +294,11 @@ func TestPublishKeepsTargetsIndependent(t *testing.T) {
 func TestPublishRetriesFailedPost(t *testing.T) {
 	t.Parallel()
 
-	thought := newThought(t, "01.md", "first")
+	thought := newThought(t, "first")
 	publication := metadata.New([]string{"01"})
+	if err := publication.SetSourceHash(hashSource([]byte("first"))); err != nil {
+		t.Fatal(err)
+	}
 
 	record := publication.Get("01", metadata.TargetBluesky)
 	if err := record.MarkPublishing(time.Now()); err != nil {
@@ -280,7 +339,7 @@ func TestPublishRetriesFailedPost(t *testing.T) {
 func TestPublishMarksCanceledPostFailed(t *testing.T) {
 	t.Parallel()
 
-	thought := newThought(t, "01.md", "first")
+	thought := newThought(t, "first")
 
 	client := &errorClient{err: context.Canceled}
 	if err := New(client).Publish(context.Background(), thought, []string{metadata.TargetBluesky}, nil); !errors.Is(err, context.Canceled) {
@@ -309,7 +368,7 @@ func TestPublishMarksCanceledPostFailed(t *testing.T) {
 func TestPublishRejectsAndStopsThread(t *testing.T) {
 	t.Parallel()
 
-	thought := newThought(t, "01.md", "first", "02.md", "second")
+	thought := newThought(t, "first\n---\nsecond")
 
 	client := &fakeClient{responses: []xpost.Response{{Status: "rejected", Error: "too long"}}}
 	if err := New(client).Publish(context.Background(), thought, []string{metadata.TargetBluesky}, nil); err == nil {
@@ -341,7 +400,7 @@ func TestPublishRejectsAndStopsThread(t *testing.T) {
 func TestPublishUsesFallbackResponseError(t *testing.T) {
 	t.Parallel()
 
-	thought := newThought(t, "01.md", "first")
+	thought := newThought(t, "first")
 
 	client := &fakeClient{responses: []xpost.Response{{Status: "failed"}}}
 	if err := New(client).Publish(context.Background(), thought, []string{metadata.TargetBluesky}, nil); err == nil {
@@ -359,7 +418,7 @@ func TestPublishUsesFallbackResponseError(t *testing.T) {
 	}
 }
 
-func newThought(t *testing.T, files ...string) archive.Thought {
+func newThought(t *testing.T, content string) archive.Thought {
 	t.Helper()
 
 	root, err := archive.New(t.TempDir())
@@ -372,10 +431,8 @@ func newThought(t *testing.T, files ...string) archive.Thought {
 		t.Fatal(err)
 	}
 
-	for index := 0; index+1 < len(files); index += 2 {
-		if err := os.WriteFile(filepath.Join(thought.Path(), files[index]), []byte(files[index+1]), 0o600); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(filepath.Join(thought.Path(), "post.md"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
 	return thought
