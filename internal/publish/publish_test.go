@@ -17,6 +17,7 @@ import (
 const (
 	responsePublished = "published"
 	errorTransport    = "transport"
+	firstRemoteID     = "at://first"
 )
 
 type fakeClient struct {
@@ -52,6 +53,7 @@ func (c *fakeClient) Validate(_ context.Context, request xpost.Request) error {
 
 func (c *fakeClient) Publish(_ context.Context, request xpost.Request) (xpost.Response, error) {
 	c.events = append(c.events, "publish:"+request.Target+":"+request.Text)
+
 	c.requests = append(c.requests, request)
 	if c.publish != nil {
 		c.publish(request)
@@ -112,7 +114,7 @@ func TestPublishThreadsAndRecordsReferences(t *testing.T) {
 
 	thought := newThought(t, "first\n---\nsecond")
 	client := &fakeClient{responses: []xpost.Response{
-		{Status: responsePublished, RemoteID: "at://first", RemoteCID: "cid-first"},
+		{Status: responsePublished, RemoteID: firstRemoteID, RemoteCID: "cid-first"},
 		{Status: responsePublished, RemoteID: "at://second", RemoteCID: "cid-second"},
 	}}
 	publisher := New(client)
@@ -122,7 +124,7 @@ func TestPublishThreadsAndRecordsReferences(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(client.requests) != 2 || client.requests[1].ReplyTo == nil || client.requests[1].ReplyTo.ID != "at://first" {
+	if len(client.requests) != 2 || client.requests[1].ReplyTo == nil || client.requests[1].ReplyTo.ID != firstRemoteID {
 		t.Fatalf("requests = %#v", client.requests)
 	}
 
@@ -189,7 +191,7 @@ func TestPublishStopsAfterFailure(t *testing.T) {
 
 	thought := newThought(t, "first\n---\nsecond\n---\nthird")
 	client := &fakeClient{responses: []xpost.Response{
-		{Status: responsePublished, RemoteID: "at://first", RemoteCID: "cid-first"},
+		{Status: responsePublished, RemoteID: firstRemoteID, RemoteCID: "cid-first"},
 		{Status: "failed", ErrorKind: errorTransport, Error: "timeout"},
 	}}
 
@@ -222,7 +224,7 @@ func TestPublishStopsWhenSourceChanges(t *testing.T) {
 	thought := newThought(t, "first\n---\nsecond")
 	client := &fakeClient{
 		responses: []xpost.Response{
-			{Status: responsePublished, RemoteID: "at://first"},
+			{Status: responsePublished, RemoteID: firstRemoteID},
 			{Status: responsePublished, RemoteID: "at://second"},
 		},
 	}
@@ -295,6 +297,7 @@ func TestPublishRetriesFailedPost(t *testing.T) {
 	t.Parallel()
 
 	thought := newThought(t, "first")
+
 	publication := metadata.New([]string{"01"})
 	if err := publication.SetSourceHash(hashSource([]byte("first"))); err != nil {
 		t.Fatal(err)

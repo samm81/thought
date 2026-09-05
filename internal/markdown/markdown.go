@@ -310,10 +310,12 @@ func splitThread(data []byte) []string {
 		if !inFence && trimmed == "---" {
 			sections = append(sections, strings.Join(sectionLines, "\n"))
 			sectionLines = make([]string, 0, len(lines))
+
 			continue
 		}
 
 		sectionLines = append(sectionLines, line)
+
 		if isFence(trimmed) {
 			inFence = !inFence
 		}

@@ -11,10 +11,10 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "meta.toml")
+
 	document := New([]string{"01", "02"})
-	if err := document.SetSourceHash("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"); err != nil {
-		t.Fatal(err)
-	}
+	document.SourceHash = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
 	record := document.Get("01", TargetBluesky)
 
 	attemptedAt := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)

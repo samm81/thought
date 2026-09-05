@@ -40,14 +40,9 @@ func New(client Client) Publisher {
 
 // NeedsPublication reports whether any selected post still needs publication.
 func NeedsPublication(thought archive.Thought, targetNames []string) (bool, error) {
-	source, err := thought.ReadSource()
+	_, documents, err := readDocuments(thought)
 	if err != nil {
-		return false, fmt.Errorf("read source: %w", err)
-	}
-
-	documents, err := markdown.ParseThread(source.Data, thought.Path())
-	if err != nil {
-		return false, fmt.Errorf("parse source: %w", err)
+		return false, err
 	}
 
 	targets, err := normalizeTargets(targetNames)
@@ -74,14 +69,9 @@ func NeedsPublication(thought archive.Thought, targetNames []string) (bool, erro
 
 // Publish publishes a thought to the selected targets.
 func (p Publisher) Publish(ctx context.Context, thought archive.Thought, targetNames []string, output io.Writer) error {
-	source, err := thought.ReadSource()
+	source, documents, err := readDocuments(thought)
 	if err != nil {
-		return fmt.Errorf("read source: %w", err)
-	}
-
-	documents, err := markdown.ParseThread(source.Data, thought.Path())
-	if err != nil {
-		return fmt.Errorf("parse source: %w", err)
+		return err
 	}
 
 	targets, err := normalizeTargets(targetNames)
@@ -108,18 +98,43 @@ func (p Publisher) Publish(ctx context.Context, thought archive.Thought, targetN
 		return err
 	}
 
-	for _, target := range targets {
-		if preflightErrors[target] != nil || !needsPublication(documents, target, publication) {
-			continue
-		}
-
-		if err := lockSource(thought, sourceHash, &publication); err != nil {
-			return err
-		}
-
-		break
+	if err := lockSourceIfNeeded(thought, sourceHash, documents, targets, preflightErrors, &publication); err != nil {
+		return err
 	}
 
+	targetErrors := p.publishTargets(ctx, thought, documents, sourceHash, targets, preflightErrors, &publication, output)
+
+	if len(targetErrors) > 0 {
+		return errors.Join(targetErrors...)
+	}
+
+	return nil
+}
+
+func readDocuments(thought archive.Thought) (archive.Source, []markdown.Document, error) {
+	source, err := thought.ReadSource()
+	if err != nil {
+		return archive.Source{}, nil, fmt.Errorf("read source: %w", err)
+	}
+
+	documents, err := markdown.ParseThread(source.Data, thought.Path())
+	if err != nil {
+		return archive.Source{}, nil, fmt.Errorf("parse source: %w", err)
+	}
+
+	return source, documents, nil
+}
+
+func (p Publisher) publishTargets(
+	ctx context.Context,
+	thought archive.Thought,
+	documents []markdown.Document,
+	sourceHash string,
+	targets []string,
+	preflightErrors map[string]error,
+	publication *metadata.Document,
+	output io.Writer,
+) []error {
 	var targetErrors []error
 
 	for _, target := range targets {
@@ -128,7 +143,7 @@ func (p Publisher) Publish(ctx context.Context, thought archive.Thought, targetN
 			continue
 		}
 
-		err := p.publishTarget(ctx, thought, documents, sourceHash, target, &publication, output)
+		err := p.publishTarget(ctx, thought, documents, sourceHash, target, publication, output)
 		if err == nil {
 			continue
 		}
@@ -140,11 +155,7 @@ func (p Publisher) Publish(ctx context.Context, thought archive.Thought, targetN
 		}
 	}
 
-	if len(targetErrors) > 0 {
-		return errors.Join(targetErrors...)
-	}
-
-	return nil
+	return targetErrors
 }
 
 func (p Publisher) validatePosts(
@@ -536,6 +547,25 @@ func needsPublication(documents []markdown.Document, target string, publication 
 	}
 
 	return false
+}
+
+func lockSourceIfNeeded(
+	thought archive.Thought,
+	sourceHash string,
+	documents []markdown.Document,
+	targets []string,
+	preflightErrors map[string]error,
+	publication *metadata.Document,
+) error {
+	for _, target := range targets {
+		if preflightErrors[target] != nil || !needsPublication(documents, target, *publication) {
+			continue
+		}
+
+		return lockSource(thought, sourceHash, publication)
+	}
+
+	return nil
 }
 
 func lockSource(thought archive.Thought, sourceHash string, publication *metadata.Document) error {

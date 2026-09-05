@@ -337,7 +337,6 @@ func parse(data []byte) (Document, error) {
 	currentPost := ""
 	currentTarget := ""
 	versionFound := false
-	sourceHashFound := false
 
 	lineNumber := 0
 	for scanner.Scan() {
@@ -369,27 +368,8 @@ func parse(data []byte) (Document, error) {
 		value = strings.TrimSpace(value)
 
 		if currentPost == "" {
-			switch key {
-			case "version":
-				version, err := parseVersionLine(value, lineNumber)
-				if err != nil {
-					return Document{}, err
-				}
-
-				document.Version = version
-				versionFound = true
-			case "source_hash":
-				if sourceHashFound {
-					return Document{}, fmt.Errorf("line %d: duplicate source hash", lineNumber)
-				}
-
-				if err := setString(&document.SourceHash, value); err != nil {
-					return Document{}, fmt.Errorf("line %d: invalid source hash: %w", lineNumber, err)
-				}
-
-				sourceHashFound = true
-			default:
-				return Document{}, fmt.Errorf("line %d: unexpected top-level key %q", lineNumber, key)
+			if err := parseTopLevelField(&document, key, value, lineNumber, &versionFound); err != nil {
+				return Document{}, err
 			}
 
 			continue
@@ -420,6 +400,27 @@ func parse(data []byte) (Document, error) {
 	}
 
 	return document, nil
+}
+
+func parseTopLevelField(document *Document, key, value string, lineNumber int, versionFound *bool) error {
+	switch key {
+	case "version":
+		version, err := parseVersionLine(value, lineNumber)
+		if err != nil {
+			return err
+		}
+
+		document.Version = version
+		*versionFound = true
+	case "source_hash":
+		if err := setString(&document.SourceHash, value); err != nil {
+			return fmt.Errorf("line %d: invalid source hash: %w", lineNumber, err)
+		}
+	default:
+		return fmt.Errorf("line %d: unexpected top-level key %q", lineNumber, key)
+	}
+
+	return nil
 }
 
 func parseTableLine(document *Document, line string) (string, string, error) {
@@ -721,6 +722,7 @@ func validSourceHash(hash string) bool {
 	}
 
 	_, err := hex.DecodeString(digest)
+
 	return err == nil
 }
 
