@@ -70,6 +70,9 @@ installed:
 go -C third_party/xpost build -o "$HOME/.local/bin/xpost" .
 ```
 
+the provider compatibility snapshots used by the bridge are recorded in
+[`third_party/xpost/UPSTREAM_COMPATIBILITY.md`](third_party/xpost/UPSTREAM_COMPATIBILITY.md).
+
 ## Archive
 
 ```text
