@@ -562,6 +562,10 @@ func lockSourceIfNeeded(
 			continue
 		}
 
+		if err := verifySourceHash(thought, sourceHash); err != nil {
+			return err
+		}
+
 		return lockSource(thought, sourceHash, publication)
 	}
 

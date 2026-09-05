@@ -224,7 +224,7 @@ func (t Thought) ReadSource() (Source, error) {
 
 	path := filepath.Join(t.path, sourceFileName)
 
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return Source{}, errors.New("post.md is required")

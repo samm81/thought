@@ -159,7 +159,9 @@ Sections are published in the order in which they appear in the file. A
 `---` line inside a fenced code block is part of that post and does not split
 the thread.
 
-The file must contain at least one post section. Empty sections are invalid.
+The file must contain at least one post section. Empty sections between
+separators are invalid. A newly created empty `post.md` remains an editable
+draft and must be filled before it can be published.
 Separate numbered Markdown files are not supported.
 
 The position of a section is its local post number for publication state and
