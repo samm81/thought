@@ -65,6 +65,30 @@ func TestCreateGeneratedName(t *testing.T) {
 	}
 }
 
+func TestThoughtNames(t *testing.T) {
+	t.Parallel()
+
+	root, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"alpha", "beta", "release-note"} {
+		if _, err := root.Create(name, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := root.ThoughtNames("re")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got) != 1 || got[0] != "release-note" {
+		t.Fatalf("ThoughtNames() = %#v, want [release-note]", got)
+	}
+}
+
 func TestReadSourceRejectsLegacyPosts(t *testing.T) {
 	t.Parallel()
 

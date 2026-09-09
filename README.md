@@ -49,6 +49,7 @@ editor for normal use.
 | `thought publish <name-or-directory> --target bluesky` | publish only to bluesky |
 | `thought publish <name-or-directory> --target x` | publish only to x |
 | `thought status [name-or-directory]` | show local states for a thought, defaulting to the most recent thought |
+| `thought completion zsh` | print zsh completion, including thoughts from `THOUGHT_HOME` |
 
 ## Configuration
 
@@ -62,6 +63,12 @@ editor for normal use.
 `xpost` still accepts its `XPOST_*` environment variables as compatibility
 overrides. See the [xpost configuration example](third_party/xpost/README.md#configuration)
 for the TOML format.
+
+enable zsh completion after `compinit`:
+
+```sh
+source <(thought completion zsh)
+```
 
 build the bridge from the checked-out submodule when it is not already
 installed:

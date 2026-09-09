@@ -29,6 +29,7 @@ commands:
   edit [name-or-directory]        edit a thought
   publish [name-or-directory] [--target ...]   publish a thought
   status [name-or-directory]      show local publication state
+  completion <shell>              print shell completion script
 
 options:
   -h, --help                     show this help
@@ -49,6 +50,8 @@ func run(ctx context.Context, arguments []string, input io.Reader, output io.Wri
 	}
 
 	switch arguments[0] {
+	case "__complete":
+		return runComplete(arguments[1:], output)
 	case "new":
 		return runNew(ctx, arguments[1:], output)
 	case "edit":
@@ -57,6 +60,8 @@ func run(ctx context.Context, arguments []string, input io.Reader, output io.Wri
 		return runPublish(ctx, arguments[1:], input, output)
 	case "status":
 		return runStatus(arguments[1:], output)
+	case "completion":
+		return runCompletion(arguments[1:], output)
 	default:
 		return usageError("unknown command %q", arguments[0])
 	}

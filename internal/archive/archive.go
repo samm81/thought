@@ -81,6 +81,28 @@ func (r Root) Path() string {
 	return r.path
 }
 
+// ThoughtNames returns direct child thought names matching prefix.
+func (r Root) ThoughtNames(prefix string) ([]string, error) {
+	entries, err := os.ReadDir(r.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("read archive root: %w", err)
+	}
+
+	names := make([]string, 0)
+
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), prefix) {
+			names = append(names, entry.Name())
+		}
+	}
+
+	return names, nil
+}
+
 // Thought resolves a thought name or full directory path under the archive root.
 func (r Root) Thought(value string) (Thought, error) {
 	path, err := r.resolveThoughtPath(value)

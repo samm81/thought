@@ -123,6 +123,8 @@ The product provides these explicit commands:
   publishing it;
 - `status [name-or-directory]` shows local publication state and remote references,
   defaulting to the most recent thought.
+- `completion zsh` prints zsh completion that suggests thought names from the
+  configured archive root.
 
 The `edit`, `publish`, and `status` commands accept either the thought's
 directory name under the archive root or its full directory path. Full paths

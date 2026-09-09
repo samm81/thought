@@ -58,6 +58,12 @@ func TestRun(t *testing.T) {
 			wantError:     ErrUsage,
 			wantErrorText: "status accepts at most one thought name or directory",
 		},
+		{
+			name:          "completion requires a supported shell",
+			arguments:     []string{"completion", "bash"},
+			wantError:     ErrUsage,
+			wantErrorText: "unsupported completion shell",
+		},
 	}
 
 	for _, test := range tests {
@@ -146,6 +152,51 @@ func TestRunEditDefaultsToMostRecentThought(t *testing.T) {
 	want := filepath.Join(newest.Path(), "post.md")
 	if got := strings.TrimSpace(string(data)); got != want {
 		t.Fatalf("edited source = %q, want %q", got, want)
+	}
+}
+
+func TestRunCompleteListsThoughts(t *testing.T) {
+	archiveRoot := t.TempDir()
+
+	root, err := archive.New(archiveRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"alpha", "beta", "release-note"} {
+		if _, err := root.Create(name, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Setenv("THOUGHT_HOME", archiveRoot)
+
+	var output bytes.Buffer
+	if err := Run(context.Background(), []string{"__complete", "re"}, &output); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := output.String(), "release-note\n"; got != want {
+		t.Fatalf("completion = %q, want %q", got, want)
+	}
+}
+
+func TestRunCompletionZsh(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	if err := Run(context.Background(), []string{"completion", "zsh"}, &output); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, value := range []string{
+		"#compdef thought",
+		"command thought __complete",
+		"compdef _thought thought",
+	} {
+		if !strings.Contains(output.String(), value) {
+			t.Fatalf("completion = %q, want %q", output.String(), value)
+		}
 	}
 }
 
