@@ -46,6 +46,18 @@ func TestRun(t *testing.T) {
 			wantError:     ErrUsage,
 			wantErrorText: "usage:",
 		},
+		{
+			name:          "edit accepts at most one thought",
+			arguments:     []string{"edit", "one", "two"},
+			wantError:     ErrUsage,
+			wantErrorText: "edit accepts at most one thought name or directory",
+		},
+		{
+			name:          "status accepts at most one thought",
+			arguments:     []string{"status", "one", "two"},
+			wantError:     ErrUsage,
+			wantErrorText: "status accepts at most one thought name or directory",
+		},
 	}
 
 	for _, test := range tests {
@@ -104,6 +116,74 @@ func TestRunNewCreatesThought(t *testing.T) {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("created path %q: %v", path, err)
 		}
+	}
+}
+
+func TestRunEditDefaultsToMostRecentThought(t *testing.T) {
+	archiveRoot := t.TempDir()
+
+	root, err := archive.New(archiveRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, newest := recentThoughts(t, root)
+	editorPath := testEditor(t)
+
+	t.Setenv("THOUGHT_HOME", archiveRoot)
+	t.Setenv("VISUAL", editorPath)
+
+	var output bytes.Buffer
+	if err := Run(context.Background(), []string{"edit"}, &output); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(editorPath + ".arg") //nolint:gosec // path is inside the private test directory
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := filepath.Join(newest.Path(), "post.md")
+	if got := strings.TrimSpace(string(data)); got != want {
+		t.Fatalf("edited source = %q, want %q", got, want)
+	}
+}
+
+func TestRunStatusDefaultsToMostRecentThought(t *testing.T) {
+	archiveRoot := t.TempDir()
+
+	root, err := archive.New(archiveRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	older, newest := recentThoughts(t, root)
+	for _, thought := range []archive.Thought{older, newest} {
+		if err := metadata.Save(thought.MetadataPath(), metadata.New([]string{"01"})); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	oldAt := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+
+	newAt := oldAt.Add(time.Minute)
+	if err := os.Chtimes(older.Path(), oldAt, oldAt); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Chtimes(newest.Path(), newAt, newAt); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("THOUGHT_HOME", archiveRoot)
+
+	var output bytes.Buffer
+	if err := Run(context.Background(), []string{"status"}, &output); err != nil {
+		t.Fatal(err)
+	}
+
+	if want := "thought: " + newest.Name() + "\n"; !strings.Contains(output.String(), want) {
+		t.Fatalf("status = %q, want %q", output.String(), want)
 	}
 }
 
@@ -271,6 +351,23 @@ func testBridge(t *testing.T) string {
 	}
 
 	return bridgePath
+}
+
+func testEditor(t *testing.T) string {
+	t.Helper()
+
+	editorPath := filepath.Join(t.TempDir(), "editor")
+	editor := "#!/bin/sh\nprintf '%s\\n' \"$1\" > \"${0}.arg\"\n"
+
+	if err := os.WriteFile(editorPath, []byte(editor), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Chmod(editorPath, 0o700); err != nil { //nolint:gosec // test editor must be executable and is private to t.TempDir
+		t.Fatal(err)
+	}
+
+	return editorPath
 }
 
 func recentThoughts(t *testing.T, root archive.Root) (archive.Thought, archive.Thought) {

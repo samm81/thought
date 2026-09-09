@@ -44,11 +44,11 @@ editor for normal use.
 | command | description |
 | --- | --- |
 | `thought new [name]` | create a thought and edit its initial post |
-| `thought edit <name-or-directory>` | edit the thought's `post.md` source |
+| `thought edit [name-or-directory]` | edit the thought's `post.md` source, defaulting to the most recent thought |
 | `thought publish [name-or-directory]` | publish an explicit thought, or confirm the most recent thought when omitted |
 | `thought publish <name-or-directory> --target bluesky` | publish only to bluesky |
 | `thought publish <name-or-directory> --target x` | publish only to x |
-| `thought status <name-or-directory>` | show local states, remote references, and recovery actions |
+| `thought status [name-or-directory]` | show local states for a thought, defaulting to the most recent thought |
 
 ## Configuration
 
@@ -91,9 +91,11 @@ successful posts are never sent again, and transient failures remain retryable.
 a forcibly terminated process may leave a `publishing` entry that must be
 checked at the destination before its TOML state is manually repaired.
 commands accept either a thought name or its full directory path, so shell tab
-completion works with the archive path. when `thought publish` has no thought
-argument, it selects the most recent thought and asks for confirmation before
-publishing; a fully published latest thought must be named explicitly.
+completion works with the archive path. when `thought edit` or `thought status`
+has no thought argument, it selects the most recent thought. when `thought
+publish` has no thought argument, it selects the most recent thought and asks
+for confirmation before publishing; a fully published latest thought must be
+named explicitly.
 
 ## License
 

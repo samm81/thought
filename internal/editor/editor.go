@@ -71,6 +71,7 @@ func Open(ctx context.Context, command string, files []string) error {
 
 	// The editor is an explicit user configuration, so arbitrary executable and arguments are intentional.
 	process := exec.CommandContext(ctx, invocation.Name, invocation.Args...) //nolint:gosec // user-configured editor command
+	process.Dir = filepath.Dir(files[0])
 	process.Stdin = os.Stdin
 	process.Stdout = os.Stdout
 

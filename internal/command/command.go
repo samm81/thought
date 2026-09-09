@@ -26,9 +26,9 @@ const usageText = `usage: thought <command> [arguments]
 
 commands:
   new [name]                      create and edit a thought
-  edit <name-or-directory>        edit a thought
+  edit [name-or-directory]        edit a thought
   publish [name-or-directory] [--target ...]   publish a thought
-  status <name-or-directory>      show local publication state
+  status [name-or-directory]      show local publication state
 
 options:
   -h, --help                     show this help
@@ -129,16 +129,18 @@ func runNew(ctx context.Context, arguments []string, output io.Writer) error {
 }
 
 func runEdit(ctx context.Context, arguments []string) error {
-	if len(arguments) != 1 {
-		return usageError("edit requires one thought name or directory")
+	if len(arguments) > 1 {
+		return usageError("edit accepts at most one thought name or directory")
 	}
+
+	name := strings.Join(arguments, "")
 
 	root, err := archive.FromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	thought, err := root.Thought(arguments[0])
+	thought, err := resolveThought(root, name)
 	if err != nil {
 		return err
 	}
@@ -186,14 +188,17 @@ func runPublish(ctx context.Context, arguments []string, input io.Reader, output
 }
 
 func resolvePublishThought(root archive.Root, name string, targets []string) (archive.Thought, bool, error) {
-	if name != "" {
-		thought, err := root.Thought(name)
-		return thought, false, err
+	thought, err := resolveThought(root, name)
+	if err != nil {
+		if name != "" {
+			return thought, false, err
+		}
+
+		return archive.Thought{}, false, fmt.Errorf("find most recent thought: %w", err)
 	}
 
-	thought, err := root.MostRecentThought()
-	if err != nil {
-		return archive.Thought{}, false, fmt.Errorf("find most recent thought: %w", err)
+	if name != "" {
+		return thought, false, nil
 	}
 
 	needsPublication, err := publish.NeedsPublication(thought, targets)
@@ -213,16 +218,18 @@ func runStatus(arguments []string, output io.Writer) error {
 		return err
 	}
 
-	if len(arguments) != 1 {
-		return usageError("status requires one thought name or directory")
+	if len(arguments) > 1 {
+		return usageError("status accepts at most one thought name or directory")
 	}
+
+	name := strings.Join(arguments, "")
 
 	root, err := archive.FromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	thought, err := root.Thought(arguments[0])
+	thought, err := resolveThought(root, name)
 	if err != nil {
 		return err
 	}
@@ -257,6 +264,14 @@ func runStatus(arguments []string, output io.Writer) error {
 	}
 
 	return nil
+}
+
+func resolveThought(root archive.Root, name string) (archive.Thought, error) {
+	if name == "" {
+		return root.MostRecentThought()
+	}
+
+	return root.Thought(name)
 }
 
 func writeRecordStatus(output io.Writer, post, target string, record metadata.Record) error {
